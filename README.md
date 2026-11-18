@@ -99,6 +99,10 @@ node dev/test.mjs
 
 本项目使用 [Qoder](https://qoder.com) 开发，参加 **Qoder 2026 创新大赛 LifeHack 赛道**。
 
+## 致谢
+
+Logo 与启动动画字形来自开源字体 Anton（SIL Open Font License 1.1）。
+
 ## License
 
 [MIT](LICENSE) © 2026 Lan Haotian

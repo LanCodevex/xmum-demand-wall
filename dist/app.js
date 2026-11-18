@@ -25,6 +25,7 @@ const I18N = {
     heroLaunch1: '需求墙刚上线',
     heroLaunch2: '来发第一条需求吧',
     glassSub: (n) => `${n} 位同学正在找人帮忙`,
+    introSub: '厦马同学的需求墙',
     timeJustNow: '刚刚',
     timeMinutesAgo: (n) => `${n} 分钟前`,
     timeHoursAgo: (n) => `${n} 小时前`,
@@ -148,6 +149,7 @@ const I18N = {
     heroLaunch1: 'Just launched',
     heroLaunch2: 'Be the first to post',
     glassSub: (n) => `${n} students need a hand`,
+    introSub: 'Campus needs, one wall',
     timeJustNow: 'just now',
     timeMinutesAgo: (n) => `${n} min ago`,
     timeHoursAgo: (n) => `${n} h ago`,
@@ -322,6 +324,23 @@ const SVG_INBOX = '<svg viewBox="0 0 48 48" width="44" height="44" role="img" ar
 const SVG_CHECK = '<svg viewBox="0 0 24 24" width="26" height="26" role="img" aria-hidden="true">'
   + '<polyline points="4.5 12.5 9.5 17.5 19.5 6.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></polyline>'
   + '</svg>';
+
+/* ================= XMUM 字形（Anton 字体轮廓，SIL Open Font License 1.1） ================= */
+const GLYPHS = {
+  viewBox: '-60 -1840 5137 1920',
+  vb: { x: -60, y: -1840, w: 5137, h: 1920 },
+  focus: { x: 495, y: -880 }, // 镜头拉远的 transform-origin（X 交叉点，SVG 坐标）
+  letters: [
+    { ch: 'X', x: 0, d: 'M27 0 216 933 66 1761H410L501 1156L582 1761H927L777 933L965 0H609L498 688L384 0Z',
+      anchors: [[27,0],[216,933],[66,1761],[410,1761],[501,1156],[582,1761],[927,1761],[777,933],[965,0],[609,0],[498,688],[384,0]] },
+    { ch: 'M', x: 991, d: 'M78 0V1760H614L762 687L909 1760H1450V0H1128V1268L926 0H610L396 1268V0Z',
+      anchors: [[78,0],[78,1760],[614,1760],[762,687],[909,1760],[1450,1760],[1450,0],[1128,0],[1128,1268],[926,0],[610,0],[396,1268],[396,0]] },
+    { ch: 'U', x: 2519, d: 'M485 -16Q265 -16 161.0 107.5Q57 231 57 471V1760H399V485Q399 441 404.0 400.5Q409 360 427.0 334.0Q445 308 485 308Q526 308 544.0 333.5Q562 359 566.5 400.0Q571 441 571 485V1760H913V471Q913 231 809.0 107.5Q705 -16 485 -16Z',
+      anchors: [[485,-16],[57,471],[57,1760],[399,1760],[399,485],[485,308],[571,485],[571,1760],[913,1760],[913,471],[485,-16]] },
+    { ch: 'M', x: 3489, d: 'M78 0V1760H614L762 687L909 1760H1450V0H1128V1268L926 0H610L396 1268V0Z',
+      anchors: [[78,0],[78,1760],[614,1760],[762,687],[909,1760],[1450,1760],[1450,0],[1128,0],[1128,1268],[926,0],[610,0],[396,1268],[396,0]] },
+  ],
+};
 
 /* ================= 工具 ================= */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1604,7 +1623,6 @@ function setOpenOnly(on) {
 
 function renderStatic() {
   document.title = COPY.docTitle;
-  $('#brand-title').textContent = COPY.appTitle;
   $('#glassbar-title').textContent = COPY.appTitle;
   $('#btn-mine').textContent = COPY.headerMy;
   $('#glass-mine').textContent = COPY.headerMy;
@@ -1645,6 +1663,210 @@ function setLang(next) {
   renderFeed();
   if ($('#modal-detail') && !$('#modal-detail').hidden && state.activeData) buildDetail(state.activeData);
   if ($('#modal-success') && !$('#modal-success').hidden && state.lastShareDemand) buildSuccess(state.lastShareDemand);
+}
+
+/* ================= XMUM 启动动画 ================= */
+const INTRO_SEEN_KEY = 'xmum_intro_seen';
+
+function shouldPlayIntro() {
+  try { if (new URLSearchParams(location.search).has('intro')) return true; } catch { /* 忽略 */ }
+  try { return localStorage.getItem(INTRO_SEEN_KEY) !== '1'; } catch { return true; }
+}
+
+function svgEl(tag) {
+  return document.createElementNS('http://www.w3.org/2000/svg', tag);
+}
+
+function glyphPath(letter) {
+  const p = svgEl('path');
+  p.setAttribute('d', letter.d);
+  p.setAttribute('transform', `translate(${letter.x} 0) scale(1 -1)`);
+  return p;
+}
+
+/* 顶栏 logo：XMUM 字形（高 17px、填充墨蓝）+「需求墙」文字 */
+function buildBrandLogo() {
+  const host = $('#brand-title');
+  if (!host || host.querySelector('.brand-logo')) return;
+  host.textContent = '';
+  const svg = svgEl('svg');
+  svg.setAttribute('viewBox', GLYPHS.viewBox);
+  svg.setAttribute('class', 'brand-logo');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'XMUM');
+  GLYPHS.letters.forEach((l) => {
+    const p = glyphPath(l);
+    p.setAttribute('fill', '#14304F');
+    svg.appendChild(p);
+  });
+  host.appendChild(svg);
+  host.appendChild(el('span', 'brand-logo-text', '需求墙'));
+}
+
+/* 灌墨层：正弦波顶边，覆盖范围向下到 y=300，保证能盖满字形 */
+function sineFillPath() {
+  const yC = -2060, A = 110, P = 1200, bottom = 300;
+  const x0 = -300, x1 = 5317, steps = 120;
+  let d = `M ${x0} ${yC}`;
+  for (let i = 1; i <= steps; i++) {
+    const x = x0 + (x1 - x0) * (i / steps);
+    const y = yC + A * Math.sin((2 * Math.PI * x) / P);
+    d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }
+  d += ` L ${x1} ${bottom} L ${x0} ${bottom} Z`;
+  return d;
+}
+
+function buildIntro() {
+  const vw = Math.min(window.innerWidth * 0.9, 420);
+  const s = vw / GLYPHS.vb.w;
+  const H = GLYPHS.vb.h * s;
+  const ox = (GLYPHS.focus.x - GLYPHS.vb.x) * s;   // 镜头焦点（X 交叉点）在单词内的本地坐标
+  const oy = (GLYPHS.focus.y - GLYPHS.vb.y) * s;
+  const strokeW = 1 / s; // scale(1) 时约 1px
+
+  // 覆盖层容器透明，白色背景单独一层，收尾淡出时单词仍可见
+  const overlay = el('div', 'intro-overlay');
+  overlay.appendChild(el('div', 'intro-bg'));
+
+  const move = el('div', 'intro-move');
+  const word = el('div', 'intro-word');
+  word.style.width = vw + 'px';
+  word.style.height = H + 'px';
+  word.style.transformOrigin = `${ox}px ${oy}px`;
+
+  const svg = svgEl('svg');
+  svg.setAttribute('viewBox', GLYPHS.viewBox);
+  svg.setAttribute('class', 'intro-svg');
+
+  // 灌墨裁剪区 = 四个字母轮廓
+  const defs = svgEl('defs');
+  const clip = svgEl('clipPath');
+  clip.setAttribute('id', 'introLetters');
+  GLYPHS.letters.forEach((l) => clip.appendChild(glyphPath(l)));
+  defs.appendChild(clip);
+  svg.appendChild(defs);
+
+  // 参考线：基线、大写顶线、每字母左右边界竖线
+  const ref = svgEl('g');
+  ref.setAttribute('class', 'intro-ref');
+  const mkLine = (x1, y1, x2, y2) => {
+    const ln = svgEl('line');
+    ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
+    ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
+    ln.setAttribute('stroke', '#D5DDE5');
+    ln.setAttribute('stroke-width', strokeW);
+    ref.appendChild(ln);
+  };
+  mkLine(-3000, 0, 8017, 0);          // 基线
+  mkLine(-3000, -1760, 8017, -1760);  // 大写顶线
+  [0, 991, 2519, 3489, 5017].forEach((x) => mkLine(x, -4000, x, 4000));
+  svg.appendChild(ref);
+
+  // 勾画轮廓（4 字母依次延迟 0/70/140/210ms）
+  const outlines = svgEl('g');
+  outlines.setAttribute('class', 'intro-outlines');
+  GLYPHS.letters.forEach((l, i) => {
+    const p = glyphPath(l);
+    p.setAttribute('class', 'intro-stroke');
+    p.setAttribute('pathLength', '1');
+    p.setAttribute('stroke', '#14304F');
+    p.setAttribute('stroke-width', strokeW);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    p.style.animationDelay = (i * 70) + 'ms';
+    outlines.appendChild(p);
+  });
+  svg.appendChild(outlines);
+
+  // 同步弹出锚点小方块（60 字体单位）
+  const anchors = svgEl('g');
+  anchors.setAttribute('class', 'intro-anchors');
+  GLYPHS.letters.forEach((l, i) => {
+    const n = l.anchors.length;
+    l.anchors.forEach(([fx, fy], j) => {
+      const r = svgEl('rect');
+      const cx = l.x + fx, cy = -fy;
+      r.setAttribute('x', cx - 30); r.setAttribute('y', cy - 30);
+      r.setAttribute('width', 60); r.setAttribute('height', 60);
+      r.setAttribute('fill', '#2F5D8C');
+      const frac = n === 1 ? 0 : j / (n - 1);
+      r.style.setProperty('--pop-delay', (i * 70 + 60 + frac * 640) + 'ms');
+      anchors.appendChild(r);
+    });
+  });
+  svg.appendChild(anchors);
+
+  // 灌墨两层（第二层最终覆盖第一层）
+  const fill = svgEl('g');
+  fill.setAttribute('clip-path', 'url(#introLetters)');
+  const mkFill = (cls) => {
+    const p = svgEl('path');
+    p.setAttribute('class', cls);
+    p.setAttribute('d', sineFillPath());
+    fill.appendChild(p);
+  };
+  mkFill('intro-fill intro-fill--orange');
+  mkFill('intro-fill intro-fill--navy');
+  svg.appendChild(fill);
+
+  word.appendChild(svg);
+  move.appendChild(word);
+  overlay.appendChild(move);
+
+  const sub = el('p', 'intro-sub', COPY.introSub);
+  sub.style.top = (window.innerHeight * 0.45 + H / 2 + 24) + 'px';
+  overlay.appendChild(sub);
+
+  // 镜头拉远关键帧：transform-origin 位于 X 交叉点，末尾平移把单词归到屏幕中央
+  const style = el('style');
+  style.textContent =
+    '@keyframes introZoom{' +
+    '0%{transform:translate(' + (-ox) + 'px,' + (-oy) + 'px) scale(7);}' +
+    '35%{transform:translate(' + (-ox - 6) + 'px,' + (-oy + 4) + 'px) scale(5.6);}' +
+    '100%{transform:translate(' + (-vw / 2) + 'px,' + (-H / 2) + 'px) scale(1);}' +
+    '}';
+  document.head.appendChild(style);
+
+  document.body.appendChild(overlay);
+  document.body.classList.add('intro-playing');
+
+  return { overlay, move, word, sub, style };
+}
+
+function startIntro() {
+  try { localStorage.setItem(INTRO_SEEN_KEY, '1'); } catch { /* 忽略 */ }
+  const intro = buildIntro();
+
+  loadDemands(); // 动画开始即请求列表，结束时首页已有内容
+
+  // 2000–2400ms FLIP：单词从屏幕中央缩到顶栏 logo 实际位置
+  setTimeout(() => {
+    const logo = document.querySelector('#brand-title .brand-logo');
+    const start = intro.word.getBoundingClientRect();
+    let end = null;
+    if (logo) end = logo.getBoundingClientRect();
+    if (!end || !end.width || !start.width) { finishIntro(intro); return; }
+    const dx = end.left - start.left;
+    const dy = end.top - start.top;
+    const sc = end.width / start.width;
+    intro.move.style.transformOrigin = `${start.left}px ${start.top}px`;
+    intro.move.style.transition = 'transform 400ms cubic-bezier(.4, 0, .2, 1)';
+    void intro.move.offsetWidth; // 强制 reflow，确保过渡生效
+    intro.move.style.transform = `translate(${dx}px, ${dy}px) scale(${sc})`;
+  }, 2000);
+
+  setTimeout(() => { intro.word.style.opacity = '0'; }, 2380);
+  setTimeout(() => finishIntro(intro), 2450);
+}
+
+function finishIntro(intro) {
+  document.body.classList.remove('intro-playing');
+  if (intro.overlay.parentNode) intro.overlay.parentNode.removeChild(intro.overlay);
+  if (intro.style.parentNode) intro.style.parentNode.removeChild(intro.style);
+  const hashId = detailIdFromHash();
+  if (hashId) openDetailById(hashId);
 }
 
 /* ================= 初始化 ================= */
@@ -1691,6 +1913,8 @@ function init() {
 
   setupViewportGuard();
 
+  buildBrandLogo();
+
   // 同步语言切换按钮初始态
   setLang(lang);
 
@@ -1703,6 +1927,8 @@ function init() {
 
   if (isAdminHash()) {
     enterAdmin();
+  } else if (shouldPlayIntro()) {
+    startIntro();
   } else {
     loadDemands();
     updateGlassbar();

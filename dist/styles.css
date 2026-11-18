@@ -720,6 +720,71 @@ body.admin #glassbar { display: none; }
   .footer { padding-bottom: 24px; }
 }
 
+/* ===== 顶栏 logo（XMUM 字形 +「需求墙」） ===== */
+.brand-title { display: flex; align-items: center; gap: 5px; }
+.brand-logo { height: 17px; width: auto; display: block; }
+.brand-logo-text { font-size: 15px; font-weight: 700; color: var(--ink); }
+
+/* ===== XMUM 启动动画 ===== */
+body.intro-playing { overflow: hidden; }
+
+.intro-overlay { position: fixed; inset: 0; z-index: 2147483000; overflow: hidden; }
+.intro-bg {
+  position: absolute; inset: 0; background: #FFFFFF;
+  animation: introFadeOut 400ms cubic-bezier(.4, 0, .2, 1) 2000ms forwards;
+}
+.intro-move { position: absolute; inset: 0; will-change: transform; }
+.intro-word {
+  position: absolute; left: 50%; top: 45%;
+  will-change: transform;
+  animation: introZoom 1200ms cubic-bezier(.75, 0, .2, 1) forwards;
+}
+.intro-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+.intro-sub {
+  position: absolute; left: 0; right: 0; margin: 0;
+  text-align: center;
+  font-size: 17px; font-weight: 600; letter-spacing: 6px; color: #14304F;
+  opacity: 0;
+  animation:
+    introSubIn 220ms cubic-bezier(.4, 0, .2, 1) 1700ms forwards,
+    introFadeOut 400ms cubic-bezier(.4, 0, .2, 1) 2000ms forwards;
+}
+
+@keyframes introFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes introSubIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 参考线：淡入 → 收尾淡出 */
+.intro-ref { opacity: 0; animation: introRefIn 400ms ease-out forwards, introFadeOut 450ms linear 1350ms forwards; }
+@keyframes introRefIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 勾画轮廓 */
+.intro-outlines { animation: introFadeOut 450ms linear 1350ms forwards; }
+.intro-stroke {
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: introDraw 800ms cubic-bezier(.5, 0, .3, 1) forwards;
+}
+@keyframes introDraw { to { stroke-dashoffset: 0; } }
+
+/* 锚点小方块 */
+.intro-anchors rect {
+  opacity: 0; transform: scale(0);
+  transform-box: fill-box; transform-origin: center;
+  animation:
+    introAnchorPop 200ms cubic-bezier(.3, 1.6, .5, 1) var(--pop-delay, 0ms) forwards,
+    introFadeOut 450ms linear 1350ms forwards;
+}
+@keyframes introAnchorPop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+
+/* 灌墨：两层正弦波从底部升到顶部（第二层最终覆盖第一层） */
+.intro-fill { animation: introFill 650ms cubic-bezier(.5, 0, .3, 1) both; }
+.intro-fill--orange { fill: #C4541D; animation-delay: 1150ms; }
+.intro-fill--navy { fill: #14304F; animation-delay: 1290ms; }
+@keyframes introFill {
+  from { transform: translate(0, 2200px); }
+  to { transform: translate(-1200px, 0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   .tear--anim { animation: none; }
