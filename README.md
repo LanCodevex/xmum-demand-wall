@@ -33,7 +33,7 @@ XMUM Demand Wall is an anonymous mutual-help board for students of Xiamen Univer
 
 - **「已接单」撕角**：被接单的需求卡片右上角做撕角效果，露出「已接单」标签。全站唯一的高饱和暖色 `#C4541D` 只用在这里——状态变化是信息流里最重要的事件，值得唯一的视觉重音。
 - **玻璃浮层顶栏**：向下滚过开场区后，顶部浮出毛玻璃栏（品牌 + 搜索 + 分类 + 我的发布），筛选能力始终在手边，又不占用首屏空间。
-- **单字印章**：每个分类一枚单字圆角印章（组/拼/学/车/宿/二/代），低饱和底色 + 同色系深字，扫一眼就能区分分类，也避免了图标库的体积与风格成本。
+- **单字印章**：每个分类一枚单字圆角印章（组/拼/学/车/住/二/代），低饱和底色 + 同色系深字，扫一眼就能区分分类，也避免了图标库的体积与风格成本。
 - **配色取自厦马校园的「红顶白墙」**：纯白底与浅灰分隔线取自白墙，正文用深瓦蓝 `#14304F` 保证对比度，红顶的暖色只留给撕角一处。整体克制、安静，让内容本身成为主角。
 - **移动优先**：375px 宽度下完成全部流程；弹窗为底部弹层（sheet），悬浮发布胶囊常驻右下。
 
@@ -49,7 +49,7 @@ XMUM Demand Wall is an anonymous mutual-help board for students of Xiamen Univer
 
 ## 技术架构
 
-- **托管**：[Qoder Sites](https://qoder.com) 静态托管 `dist/` 前端产物，公开访问，自带 HTTPS 与全球分发。
+- **托管**：[Qoder Sites](https://qoder.com) 静态托管 `dist/` 前端产物，公开访问，自带 HTTPS。
 - **数据库**：Qoder Sites 自带 PostgreSQL 数据库（`app` schema），表结构变更只走平台 migration 流程；业务表为 `demands`（需求）与 `reports`（举报）。
 - **Server Functions**：Deno Edge Function 承载全部业务接口（`/functions/v1/app` 同源调用）。入口 `functions/index.ts` 负责装配，业务逻辑集中在 `functions/routes.mjs`（纯函数式 `application({ db, BackendError, env })`，便于本地注入假数据库测试）。
 - **平台运行时模块**：`functions/_qoder/backend.mjs`（提供 `createDatabaseClient` / `createSiteContext` / `errorResponse` / `BackendError`）由 Qoder Sites 运行时在部署时注入，**不在本仓库中**，因此 `index.ts` 无法在本地直接运行；本地测试只导入 `routes.mjs`。
