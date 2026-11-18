@@ -1,0 +1,5 @@
+*.qoder.site
+/screenshots/
+/preview-375.png
+node_modules/
+.DS_Store

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="description" content="XMUM 校园需求墙 —— 厦门大学马来西亚分校学生互助需求发布与查找平台" />
+  <link rel="icon" href="/favicon.svg" />
+  <title>XMUM 校园需求墙</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- 顶部一行（未滚动时） -->
+    <header class="topbar" id="topbar">
+      <h1 class="brand-title" id="brand-title"></h1>
+      <div class="topbar-actions">
+        <div class="lang-switch" id="lang-switch" role="group" aria-label="语言 / Language">
+          <button type="button" data-lang="zh">中</button>
+          <button type="button" data-lang="en">EN</button>
+        </div>
+        <button class="btn btn-ghost" id="btn-mine" type="button"></button>
+        <button class="btn btn-primary btn-publish-desktop" id="btn-publish" type="button"></button>
+      </div>
+    </header>
+
+    <!-- 开场区 -->
+    <section class="hero" id="hero">
+      <p class="hero-line1" id="hero-line1"></p>
+      <p class="hero-line2" id="hero-line2"></p>
+      <p class="hero-line3" id="hero-line3"></p>
+    </section>
+
+    <!-- 搜索 + 分类 + 开关 -->
+    <div class="controls">
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+        </svg>
+        <input id="search" class="search-input" type="search" autocomplete="off" enterkeyhint="search" />
+      </div>
+      <div class="tabs" id="tabs" role="tablist" aria-label="分类筛选"></div>
+      <div class="switch-row">
+        <p class="lang-note" id="lang-note" hidden></p>
+        <button id="open-only" class="switch" type="button" role="switch" aria-checked="false">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="switch-label"></span>
+        </button>
+      </div>
+    </div>
+
+    <main class="feed" id="feed" aria-live="polite"></main>
+    <footer class="footer" id="footer"></footer>
+  </div>
+
+  <!-- 玻璃浮层顶栏（滚动后出现） -->
+  <div class="glassbar" id="glassbar" aria-hidden="true">
+    <div class="glassbar-main">
+      <div class="glassbar-brand">
+        <div class="glassbar-title" id="glassbar-title"></div>
+        <div class="glassbar-sub" id="glassbar-sub"></div>
+      </div>
+      <div class="glassbar-actions">
+        <button class="glass-icon" id="glass-search-btn" type="button" aria-label="搜索">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+            <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          </svg>
+        </button>
+        <button class="btn btn-glass" id="glass-mine" type="button"></button>
+      </div>
+    </div>
+    <div class="glass-search-row" id="glass-search-row" hidden>
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+        </svg>
+        <input id="glass-search" class="search-input" type="search" autocomplete="off" enterkeyhint="search" />
+      </div>
+    </div>
+    <div class="tabs" id="glass-tabs" role="tablist" aria-label="分类筛选"></div>
+  </div>
+
+  <!-- 发布按钮（悬浮胶囊） -->
+  <button class="fab" id="fab-publish" type="button">
+    <span class="fab-plus" aria-hidden="true">+</span>
+    <span class="fab-label" id="fab-label"></span>
+  </button>
+
+  <!-- 详情弹窗 -->
+  <div class="backdrop" id="modal-detail" hidden>
+    <div class="sheet sheet--detail" role="dialog" aria-modal="true" aria-labelledby="detail-title"></div>
+  </div>
+
+  <!-- 发布表单弹窗 -->
+  <div class="backdrop" id="modal-publish" hidden>
+    <div class="sheet sheet--publish" role="dialog" aria-modal="true" aria-labelledby="publish-title"></div>
+  </div>
+
+  <!-- 我的发布弹窗 -->
+  <div class="backdrop" id="modal-mine" hidden>
+    <div class="sheet sheet--mine" role="dialog" aria-modal="true" aria-labelledby="mine-title"></div>
+  </div>
+
+  <!-- 发布成功弹窗 -->
+  <div class="backdrop" id="modal-success" hidden>
+    <div class="sheet sheet--success" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <!-- 页内确认弹窗（撤下操作，替代原生 confirm） -->
+  <div class="backdrop" id="modal-confirm" hidden>
+    <div class="sheet sheet--confirm" role="alertdialog" aria-modal="true"></div>
+  </div>
+
+  <!-- 分享文案手动复制弹窗（剪贴板 API 与 execCommand 均失败时的兜底） -->
+  <div class="backdrop" id="modal-manual" hidden>
+    <div class="sheet sheet--manual" role="dialog" aria-modal="true" aria-labelledby="manual-title"></div>
+  </div>
+
+  <!-- 举报弹窗 -->
+  <div class="backdrop" id="modal-report" hidden>
+    <div class="sheet sheet--report" role="dialog" aria-modal="true" aria-labelledby="report-title"></div>
+  </div>
+
+  <!-- 管理页（/#/admin，隐藏路由，普通页面无入口） -->
+  <main class="admin" id="admin" hidden>
+    <div class="admin-inner">
+      <div class="admin-head">
+        <h1 id="admin-title"></h1>
+        <button class="btn btn-ghost" id="admin-exit" type="button"></button>
+      </div>
+      <div class="admin-auth" id="admin-auth"></div>
+      <div class="admin-tools" id="admin-tools"></div>
+      <div class="admin-list" id="admin-list"></div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
