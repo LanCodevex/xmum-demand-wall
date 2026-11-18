@@ -1703,10 +1703,10 @@ function buildBrandLogo() {
   host.appendChild(el('span', 'brand-logo-text', '需求墙'));
 }
 
-/* 灌墨层：正弦波顶边，覆盖范围向下到 y=300，保证能盖满字形 */
+/* 灌墨层：正弦波顶边，向下盖到 y=300；横向右端预留 1200 余量，抵消 introFill 的 -1200px 横移，保证盖满整个单词 */
 function sineFillPath() {
   const yC = -2060, A = 110, P = 1200, bottom = 300;
-  const x0 = -300, x1 = 5317, steps = 120;
+  const x0 = -300, x1 = 6600, steps = 140;
   let d = `M ${x0} ${yC}`;
   for (let i = 1; i <= steps; i++) {
     const x = x0 + (x1 - x0) * (i / steps);
@@ -1718,22 +1718,13 @@ function sineFillPath() {
 }
 
 function buildIntro() {
-  const vw = Math.min(window.innerWidth * 0.9, 420);
-  const s = vw / GLYPHS.vb.w;
-  const H = GLYPHS.vb.h * s;
-  const ox = (GLYPHS.focus.x - GLYPHS.vb.x) * s;   // 镜头焦点（X 交叉点）在单词内的本地坐标
-  const oy = (GLYPHS.focus.y - GLYPHS.vb.y) * s;
-  const strokeW = 1 / s; // scale(1) 时约 1px
-
-  // 覆盖层容器透明，白色背景单独一层，收尾淡出时单词仍可见
-  const overlay = el('div', 'intro-overlay');
+  // 覆盖层容器透明，白色背景单独一层，收尾淡出时单词仍可见。
+  // 先以「暂停」态挂载，量出单词真实布局尺寸后再统一启动动画，保证各动画时钟同步。
+  const overlay = el('div', 'intro-overlay intro-paused');
   overlay.appendChild(el('div', 'intro-bg'));
 
   const move = el('div', 'intro-move');
-  const word = el('div', 'intro-word');
-  word.style.width = vw + 'px';
-  word.style.height = H + 'px';
-  word.style.transformOrigin = `${ox}px ${oy}px`;
+  const word = el('div', 'intro-word'); // 宽度由 CSS min(90vw,420px) 决定，高度按 viewBox 比例计算
 
   const svg = svgEl('svg');
   svg.setAttribute('viewBox', GLYPHS.viewBox);
@@ -1747,16 +1738,17 @@ function buildIntro() {
   defs.appendChild(clip);
   svg.appendChild(defs);
 
-  // 参考线：基线、大写顶线、每字母左右边界竖线
+  // 参考线：超长延伸只影响绘制（SVG overflow:visible），不改变单词的布局宽度与居中
   const ref = svgEl('g');
   ref.setAttribute('class', 'intro-ref');
+  const refLines = [];
   const mkLine = (x1, y1, x2, y2) => {
     const ln = svgEl('line');
     ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
     ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
     ln.setAttribute('stroke', '#D5DDE5');
-    ln.setAttribute('stroke-width', strokeW);
     ref.appendChild(ln);
+    refLines.push(ln);
   };
   mkLine(-3000, 0, 8017, 0);          // 基线
   mkLine(-3000, -1760, 8017, -1760);  // 大写顶线
@@ -1766,17 +1758,18 @@ function buildIntro() {
   // 勾画轮廓（4 字母依次延迟 0/70/140/210ms）
   const outlines = svgEl('g');
   outlines.setAttribute('class', 'intro-outlines');
+  const strokePaths = [];
   GLYPHS.letters.forEach((l, i) => {
     const p = glyphPath(l);
     p.setAttribute('class', 'intro-stroke');
     p.setAttribute('pathLength', '1');
     p.setAttribute('stroke', '#14304F');
-    p.setAttribute('stroke-width', strokeW);
     p.setAttribute('fill', 'none');
     p.setAttribute('stroke-linecap', 'round');
     p.setAttribute('stroke-linejoin', 'round');
     p.style.animationDelay = (i * 70) + 'ms';
     outlines.appendChild(p);
+    strokePaths.push(p);
   });
   svg.appendChild(outlines);
 
@@ -1816,21 +1809,37 @@ function buildIntro() {
   overlay.appendChild(move);
 
   const sub = el('p', 'intro-sub', COPY.introSub);
-  sub.style.top = (window.innerHeight * 0.45 + H / 2 + 24) + 'px';
   overlay.appendChild(sub);
 
-  // 镜头拉远关键帧：transform-origin 位于 X 交叉点，末尾平移把单词归到屏幕中央
+  document.body.appendChild(overlay);
+  document.body.classList.add('intro-playing');
+
+  // 量取真实布局宽度（getComputedStyle 不受 transform 影响，精确到小数），高度按 viewBox 比例计算
+  const W = parseFloat(getComputedStyle(word).width);
+  const H = W * GLYPHS.vb.h / GLYPHS.vb.w;
+  word.style.height = H + 'px';
+  const s = W / GLYPHS.vb.w;
+  const ox = (GLYPHS.focus.x - GLYPHS.vb.x) * s;   // 镜头焦点（X 交叉点）在单词内的本地坐标
+  const oy = (GLYPHS.focus.y - GLYPHS.vb.y) * s;
+  const strokeW = 1 / s; // scale(1) 时约 1px
+
+  strokePaths.forEach((p) => p.setAttribute('stroke-width', strokeW));
+  refLines.forEach((ln) => ln.setAttribute('stroke-width', strokeW));
+  word.style.transformOrigin = `${ox}px ${oy}px`;
+  sub.style.top = (window.innerHeight * 0.45 + H / 2 + 24) + 'px';
+
+  // 镜头拉远关键帧：transform-origin 位于 X 交叉点，末尾平移把单词归到屏幕中央（左右留白相等）
   const style = el('style');
   style.textContent =
     '@keyframes introZoom{' +
     '0%{transform:translate(' + (-ox) + 'px,' + (-oy) + 'px) scale(7);}' +
     '35%{transform:translate(' + (-ox - 6) + 'px,' + (-oy + 4) + 'px) scale(5.6);}' +
-    '100%{transform:translate(' + (-vw / 2) + 'px,' + (-H / 2) + 'px) scale(1);}' +
+    '100%{transform:translate(' + (-W / 2) + 'px,' + (-H / 2) + 'px) scale(1);}' +
     '}';
   document.head.appendChild(style);
 
-  document.body.appendChild(overlay);
-  document.body.classList.add('intro-playing');
+  // 解除暂停：全部动画从同一时刻开始
+  overlay.classList.remove('intro-paused');
 
   return { overlay, move, word, sub, style };
 }
@@ -1841,7 +1850,7 @@ function startIntro() {
 
   loadDemands(); // 动画开始即请求列表，结束时首页已有内容
 
-  // 2000–2400ms FLIP：单词从屏幕中央缩到顶栏 logo 实际位置
+  // 2080–2480ms FLIP：单词从屏幕中央缩到顶栏 logo 实际位置（基于修正后的真实尺寸）
   setTimeout(() => {
     const logo = document.querySelector('#brand-title .brand-logo');
     const start = intro.word.getBoundingClientRect();
@@ -1855,10 +1864,10 @@ function startIntro() {
     intro.move.style.transition = 'transform 400ms cubic-bezier(.4, 0, .2, 1)';
     void intro.move.offsetWidth; // 强制 reflow，确保过渡生效
     intro.move.style.transform = `translate(${dx}px, ${dy}px) scale(${sc})`;
-  }, 2000);
+  }, 2080);
 
-  setTimeout(() => { intro.word.style.opacity = '0'; }, 2380);
-  setTimeout(() => finishIntro(intro), 2450);
+  setTimeout(() => { intro.word.style.opacity = '0'; }, 2460);
+  setTimeout(() => finishIntro(intro), 2520);
 }
 
 function finishIntro(intro) {
