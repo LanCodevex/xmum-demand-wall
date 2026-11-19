@@ -1808,13 +1808,60 @@ function sineFillPath() {
   return d;
 }
 
+/* 液体波浪转场色带：宽 = 视口 220%，viewBox 宽 WAVE.w(=220) 单位，1 单位 = 视口宽 1%；
+   左右两边为竖向正弦波，波峰到波谷占 2*amp 单位，因此色带实心区为 [2*amp, w-2*amp]。 */
+const WAVE = { w: 220, amp: 3, periods: 2, dur: 760, removeAt: 2950 };
+const WAVE_BANDS = [
+  { color: '#C4541D', delay: 2050, phase: 0 },
+  { color: '#2F5D8C', delay: 2110, phase: 0.35 },
+  { color: '#14304F', delay: 2170, phase: 0.7 },
+];
+
+function waveBandPath(phase) {
+  const { w, amp, periods } = WAVE;
+  const steps = 48;
+  const xAt = (y) => amp + amp * Math.sin(2 * Math.PI * (periods * y / 100 + phase));
+  let d = '';
+  for (let i = 0; i <= steps; i++) {           // 左边：自上而下
+    const y = (100 * i) / steps;
+    d += `${i ? ' L' : 'M'} ${xAt(y).toFixed(2)} ${y.toFixed(2)}`;
+  }
+  for (let i = steps; i >= 0; i--) {           // 右边：自下而上，与左边同相位，保持等宽
+    const y = (100 * i) / steps;
+    d += ` L ${(w - 2 * amp + xAt(y)).toFixed(2)} ${y.toFixed(2)}`;
+  }
+  return d + ' Z';
+}
+
+/* cubic-bezier(.65,0,.35,1) 的数值求值 */
+function waveEase(t) {
+  const bz = (p1, p2, s) => 3 * (1 - s) * (1 - s) * s * p1 + 3 * (1 - s) * s * s * p2 + s * s * s;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (bz(0.65, 0.35, m) < t) lo = m; else hi = m; }
+  return bz(0, 1, (lo + hi) / 2);
+}
+
+/* 深蓝色带完全盖住屏幕的时刻（ms）。
+   色带 translateX 从 +w% 到 -w%（以视口宽为 100），位移 = w - 2w·p，实心区左缘 = w - 2w·p + 2·amp。
+   左缘 ≤ 0（再留 4px 抗锯齿余量）时盖满；此时实心区右缘 = 左缘 + (w - 4·amp) ≈ 208 > 100，右侧同样盖满。
+   盖满窗口约 2554–2630ms，与视口宽度无关（全部按百分比缩放），各宽度均无缝隙。 */
+function waveCoverTime(viewportW) {
+  const { w, amp, dur } = WAVE;
+  const navy = WAVE_BANDS[WAVE_BANDS.length - 1];
+  const margin = (4 / Math.max(viewportW, 1)) * 100;   // 4px 换算为视口百分比单位
+  const pNeed = (w + 2 * amp + margin) / (2 * w);
+  for (let ms = 0; ms <= dur; ms++) {
+    if (waveEase(ms / dur) >= pNeed) return navy.delay + ms;
+  }
+  return navy.delay + dur;
+}
+
 function buildIntro() {
   // 覆盖层容器透明，白色背景单独一层，收尾淡出时单词仍可见。
   // 先以「暂停」态挂载，量出单词真实布局尺寸后再统一启动动画，保证各动画时钟同步。
   const overlay = el('div', 'intro-overlay intro-paused');
   overlay.appendChild(el('div', 'intro-bg'));
 
-  const move = el('div', 'intro-move');
   const word = el('div', 'intro-word'); // 宽度由 CSS min(90vw,420px) 决定，高度按 viewBox 比例计算
 
   const svg = svgEl('svg');
@@ -1828,23 +1875,6 @@ function buildIntro() {
   GLYPHS.letters.forEach((l) => clip.appendChild(glyphPath(l)));
   defs.appendChild(clip);
   svg.appendChild(defs);
-
-  // 参考线：超长延伸只影响绘制（SVG overflow:visible），不改变单词的布局宽度与居中
-  const ref = svgEl('g');
-  ref.setAttribute('class', 'intro-ref');
-  const refLines = [];
-  const mkLine = (x1, y1, x2, y2) => {
-    const ln = svgEl('line');
-    ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
-    ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
-    ln.setAttribute('stroke', '#D5DDE5');
-    ref.appendChild(ln);
-    refLines.push(ln);
-  };
-  mkLine(-3000, 0, 8017, 0);          // 基线
-  mkLine(-3000, -1760, 8017, -1760);  // 大写顶线
-  [0, 991, 2519, 3489, 5017].forEach((x) => mkLine(x, -4000, x, 4000));
-  svg.appendChild(ref);
 
   // 勾画轮廓（4 字母依次延迟 0/70/140/210ms）
   const outlines = svgEl('g');
@@ -1896,11 +1926,28 @@ function buildIntro() {
   svg.appendChild(fill);
 
   word.appendChild(svg);
-  move.appendChild(word);
-  overlay.appendChild(move);
+  overlay.appendChild(word);
 
   const sub = el('p', 'intro-sub', COPY.introSub);
   overlay.appendChild(sub);
+
+  // 液体波浪转场：橙 → 中蓝 → 深蓝三条色带依次从右扫到左（深蓝在最上层）
+  WAVE_BANDS.forEach((b, i) => {
+    const band = svgEl('svg');
+    band.setAttribute('class', 'intro-wave');
+    band.setAttribute('viewBox', `0 0 ${WAVE.w} 100`);
+    band.setAttribute('preserveAspectRatio', 'none');
+    band.setAttribute('aria-hidden', 'true');
+    band.style.zIndex = String(i + 1);
+    band.style.animationDelay = b.delay + 'ms';
+    const p = svgEl('path');
+    p.setAttribute('d', waveBandPath(b.phase));
+    p.setAttribute('fill', b.color);
+    band.appendChild(p);
+    overlay.appendChild(band);
+  });
+  // 深蓝色带完全盖住屏幕的时刻：开场画面在此刻隐藏，首页在色带下方露出
+  overlay.style.setProperty('--intro-hide', waveCoverTime(window.innerWidth) + 'ms');
 
   document.body.appendChild(overlay);
   document.body.classList.add('intro-playing');
@@ -1915,7 +1962,6 @@ function buildIntro() {
   const strokeW = 1 / s; // scale(1) 时约 1px
 
   strokePaths.forEach((p) => p.setAttribute('stroke-width', strokeW));
-  refLines.forEach((ln) => ln.setAttribute('stroke-width', strokeW));
   word.style.transformOrigin = `${ox}px ${oy}px`;
   sub.style.top = (window.innerHeight * 0.45 + H / 2 + 24) + 'px';
 
@@ -1932,7 +1978,7 @@ function buildIntro() {
   // 解除暂停：全部动画从同一时刻开始
   overlay.classList.remove('intro-paused');
 
-  return { overlay, move, word, sub, style };
+  return { overlay, word, sub, style };
 }
 
 function startIntro() {
@@ -1941,24 +1987,11 @@ function startIntro() {
 
   loadDemands(); // 动画开始即请求列表，结束时首页已有内容
 
-  // 2080–2480ms FLIP：单词从屏幕中央缩到顶栏 logo 实际位置（基于修正后的真实尺寸）
-  setTimeout(() => {
-    const logo = document.querySelector('#brand-title .brand-logo');
-    const start = intro.word.getBoundingClientRect();
-    let end = null;
-    if (logo) end = logo.getBoundingClientRect();
-    if (!end || !end.width || !start.width) { finishIntro(intro); return; }
-    const dx = end.left - start.left;
-    const dy = end.top - start.top;
-    const sc = end.width / start.width;
-    intro.move.style.transformOrigin = `${start.left}px ${start.top}px`;
-    intro.move.style.transition = 'transform 400ms cubic-bezier(.4, 0, .2, 1)';
-    void intro.move.offsetWidth; // 强制 reflow，确保过渡生效
-    intro.move.style.transform = `translate(${dx}px, ${dy}px) scale(${sc})`;
-  }, 2080);
-
-  setTimeout(() => { intro.word.style.opacity = '0'; }, 2460);
-  setTimeout(() => finishIntro(intro), 2520);
+  // 开场画面在深蓝色带盖满屏幕时由 CSS 隐藏（introHide），此刻同步解除滚动锁定，滚动条出现引起的布局变化被色带遮住
+  intro.overlay.querySelector('.intro-bg').addEventListener('animationend', (e) => {
+    if (e.animationName === 'introHide') document.body.classList.remove('intro-playing');
+  });
+  setTimeout(() => finishIntro(intro), WAVE.removeAt);
 }
 
 function finishIntro(intro) {
