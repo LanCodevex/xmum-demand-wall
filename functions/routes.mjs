@@ -160,16 +160,27 @@ export function application({ db, BackendError, env = null }) {
   }
   // 数据库没有外键级联，由服务端清理关联数据：
   // 删除回复 → 删其 reply_reports；删除需求 → 删其 replies 及这些回复的 reply_reports。
-  async function purgeReplyReports(replyIds) {
-    if (!replyIds.length) return;
-    rows(await db.from('reply_reports').delete().in('reply_id', replyIds).select('id'));
+  // 平台数据库客户端不一定支持 .in()，这里只用 .eq() 逐个处理。
+  // 清理是「尽力而为」：主记录已删除成功，清理失败只记日志，绝不影响接口返回。
+  async function purgeReplyReports(replyId) {
+    rows(await db.from('reply_reports').delete().eq('reply_id', replyId).select('id'));
   }
-  async function purgeDemandChildren(demandIds) {
-    if (!demandIds.length) return;
-    const replies = rows(await db.from('replies').select('id').in('demand_id', demandIds));
-    const replyIds = (Array.isArray(replies) ? replies : []).map((r) => r.id);
-    await purgeReplyReports(replyIds);
-    rows(await db.from('replies').delete().in('demand_id', demandIds).select('id'));
+  async function purgeDemandChildren(demandId) {
+    const replies = rows(await db.from('replies').select('id').eq('demand_id', demandId));
+    for (const r of Array.isArray(replies) ? replies : []) {
+      if (r && r.id) await purgeReplyReports(r.id);
+    }
+    rows(await db.from('replies').delete().eq('demand_id', demandId).select('id'));
+  }
+  async function safePurgeDemands(demandIds) {
+    for (const id of demandIds) {
+      try { await purgeDemandChildren(id); }
+      catch (error) { console.error('purge_demand_children_failed', id, error && (error.code || error.message)); }
+    }
+  }
+  async function safePurgeReply(replyId) {
+    try { await purgeReplyReports(replyId); }
+    catch (error) { console.error('purge_reply_reports_failed', replyId, error && (error.code || error.message)); }
   }
 
   const tokenMatches = (demand, token) => typeof token === 'string' && token !== ''
@@ -273,7 +284,7 @@ export function application({ db, BackendError, env = null }) {
       const deleted = rows(await db.from('demands').delete()
         .eq('id', deleteMatch[1]).eq('manage_token', token).select('id'));
       if (!deleted || !deleted.length) fail('manage_token_invalid', 403);
-      await purgeDemandChildren([deleted[0].id]);
+      await safePurgeDemands([deleted[0].id]);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -409,8 +420,12 @@ export function application({ db, BackendError, env = null }) {
         .order('created_at', { ascending: false }).limit(500));
       const repList = Array.isArray(reps) ? reps : [];
       const ids = [...new Set(repList.map((r) => r.demand_id))];
-      let demands = [];
-      if (ids.length) demands = rows(await db.from('demands').select(LIST_COLUMNS).in('id', ids));
+      // 只用 .eq() 逐个取需求（平台客户端不一定支持 .in()）
+      const demands = [];
+      for (const id of ids) {
+        const found = rows(await db.from('demands').select(LIST_COLUMNS).eq('id', id).limit(1));
+        if (Array.isArray(found) && found.length) demands.push(found[0]);
+      }
       const byId = new Map((Array.isArray(demands) ? demands : []).map((d) => [d.id, d]));
       const groups = new Map();
       for (const r of repList) {
@@ -429,7 +444,7 @@ export function application({ db, BackendError, env = null }) {
       requireAdmin(request);
       const deleted = rows(await db.from('demands').delete().eq('id', adminDelMatch[1]).select('id'));
       if (!deleted || !deleted.length) fail('not_found', 404);
-      await purgeDemandChildren([deleted[0].id]);
+      await safePurgeDemands([deleted[0].id]);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -439,7 +454,7 @@ export function application({ db, BackendError, env = null }) {
       requireAdmin(request);
       const deleted = rows(await db.from('replies').delete().eq('id', adminReplyDelMatch[1]).select('id'));
       if (!deleted || !deleted.length) fail('not_found', 404);
-      await purgeReplyReports([deleted[0].id]);
+      await safePurgeReply(deleted[0].id);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -456,7 +471,7 @@ export function application({ db, BackendError, env = null }) {
     if (path === '/api/admin/samples' && request.method === 'DELETE') {
       requireAdmin(request);
       const deleted = rows(await db.from('demands').delete().eq('is_sample', true).select('id'));
-      await purgeDemandChildren((Array.isArray(deleted) ? deleted : []).map((d) => d.id));
+      await safePurgeDemands((Array.isArray(deleted) ? deleted : []).map((d) => d.id).filter(Boolean));
       return Response.json({ ok: true, deleted: Array.isArray(deleted) ? deleted.length : 0 });
     }
 

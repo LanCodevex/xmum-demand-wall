@@ -9,8 +9,10 @@ class FakeError extends Error {
 // 多表内存假 DB：支持 demands / reports，支持 eq / in / order / limit / insert / update / delete。
 function createFakeDb() {
   const tables = { demands: [], reports: [], replies: [], reply_reports: [] };
+  const failTables = new Set();
   return {
     tables,
+    failTables,
     from(table) {
       if (!(table in tables)) throw new FakeError('invalid_table', 400);
       const rows_ = tables[table];
@@ -20,7 +22,9 @@ function createFakeDb() {
       const q = {
         select(c) { cols = c; return q; },
         eq(k, v) { filters.push({ op: 'eq', key: k, val: v }); return q; },
-        in(k, arr) { filters.push({ op: 'in', key: k, val: arr }); return q; },
+        // Qoder Sites 的数据库客户端不一定支持 .in()（线上 delete + in 导致过 500），
+        // 这里一律直接抛错，保证业务代码只用 .eq() 逐个处理。
+        in() { throw new Error('fake_db: .in() is not supported; use .eq() per id'); },
         order(k, opts) { order = [k, opts && opts.ascending === false ? 'desc' : 'asc']; return q; },
         limit(n) { limit = n; return q; },
         insert(v) { mode = 'insert'; values = v; return q; },
@@ -28,6 +32,8 @@ function createFakeDb() {
         delete() { mode = 'delete'; return q; },
         then(resolve) {
           return Promise.resolve().then(() => {
+            // 故障注入：被标记的表返回数据库错误（模拟线上清理失败）
+            if (failTables.has(table)) return { data: null, error: { code: 'fake_db_failure', status: 500 } };
             let data;
             if (mode === 'insert') {
               const row = { ...values, created_at: values.created_at || new Date().toISOString() };
@@ -514,7 +520,8 @@ assert(r.status === 404, '（回复）重复删除返回 404');
 {
   const dbC = createFakeDb();
   const callC = mkCall(application({ db: dbC, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
-  const mk = async (title) => (await (await callC('POST', '/api/demands', { category: 'study', title, description: 'd' })).json());
+  let mkSeq = 0; // 每次发布用不同设备令牌，避免触发「每设备 10 分钟 5 条」发布限流
+  const mk = async (title) => (await (await callC('POST', '/api/demands', { category: 'study', title, description: 'd' }, { 'x-dw-client': 'mk-' + (++mkSeq) })).json());
   // 给需求加 1 条公开、1 条私信，并让公开回复被举报 1 次
   const seed = async (d, tag) => {
     const pub = await (await callC('POST', `/api/demands/${d.id}/replies`, { body: 'pub' }, { 'x-dw-client': 'c-' + tag })).json();
@@ -564,6 +571,48 @@ assert(r.status === 404, '（回复）重复删除返回 404');
 
   // 其他需求的数据不受影响
   assert(repliesOf(keep.id).length === 2 && reportsOf([keepPub.id]).length === 1, '（级联）其他需求的回复与举报保持不变');
+
+  // 47. 没有回复的需求也能正常撤下（线上曾在此返回 500）
+  const dEmpty = await mk('无回复');
+  r = await callC('DELETE', `/api/demands/${dEmpty.id}`, undefined, { 'x-manage-token': dEmpty.manage_token });
+  const emptyRes = await r.json();
+  assert(r.status === 200 && emptyRes.ok === true && emptyRes.id === dEmpty.id, '（级联）无回复的需求撤下返回 200 ok');
+
+  // 48. 清理关联数据失败：只记日志，撤下/删除仍返回 ok，需求本身已删除
+  const realError = console.error;
+  const logged = [];
+  console.error = (...args) => { logged.push(args); if (String(args[0]).startsWith('✗')) realError(...args); };
+  try {
+    const dF = await mk('清理失败');
+    await seed(dF, 'F');
+    dbC.failTables.add('replies');
+    r = await callC('DELETE', `/api/demands/${dF.id}`, undefined, { 'x-manage-token': dF.manage_token });
+    const fRes = await r.json();
+    assert(r.status === 200 && fRes.ok === true, '（级联）清理回复失败时撤下仍返回 200 ok');
+    assert(!dbC.tables.demands.some((x) => x.id === dF.id), '（级联）清理失败不影响需求本身被删除');
+    assert(logged.some((a) => a[0] === 'purge_demand_children_failed'), '（级联）清理失败写 console.error 日志');
+
+    const dG = await mk('管理员删-清理失败');
+    r = await callC('DELETE', `/api/admin/demands/${dG.id}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+    assert(r.status === 200 && (await r.json()).ok === true, '（级联）清理失败时管理员删除需求仍返回 ok');
+    dbC.failTables.delete('replies');
+
+    const dH = await mk('删回复-清理失败');
+    const pubH = await seed(dH, 'H');
+    dbC.failTables.add('reply_reports');
+    r = await callC('DELETE', `/api/admin/replies/${pubH.id}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+    assert(r.status === 200 && (await r.json()).ok === true, '（级联）清理回复举报失败时删除回复仍返回 ok');
+    assert(logged.some((a) => a[0] === 'purge_reply_reports_failed'), '（级联）回复举报清理失败写日志');
+    dbC.failTables.delete('reply_reports');
+  } finally {
+    console.error = realError;
+    dbC.failTables.clear();
+  }
+
+  // 49. 模拟数据库拒绝 .in()，防止以后再用
+  let inThrew = false;
+  try { dbC.from('replies').delete().in('id', ['x']); } catch { inThrew = true; }
+  assert(inThrew, '（级联）模拟数据库对 .in() 直接抛错');
 }
 
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);
