@@ -20,10 +20,11 @@ const I18N = {
     },
     status: { open: '进行中', taken: '已接单', done: '已完成' },
     heroOpen: (n) => `${n} 位同学`,
-    heroNeed: '正在找人帮忙',
+    heroNeed: () => '正在找人帮忙',
     heroDone: (n) => `已经帮成 ${n} 单`,
     heroLaunch1: '需求墙刚上线',
-    heroLaunch2: '来发第一条需求吧',
+    heroLaunch2: '下面是示例，来发第一条真实需求吧',
+    brandWall: '需求墙',
     glassSub: (n) => `${n} 位同学正在找人帮忙`,
     introSub: '厦马同学的需求墙',
     timeJustNow: '刚刚',
@@ -65,10 +66,19 @@ const I18N = {
     successHint: '请保存下面的管理码，用于以后修改需求状态。已自动保存到本机「我的发布」。',
     manageCode: '管理码',
     copyCode: '复制管理码',
+    codeRestoreHint: '换手机时用它找回',
     done: '完成',
     mineTitle: '我的发布',
     mineEmpty: '本机还没有发布记录。发布需求后会自动出现在这里。',
-    mineHint: '仅显示当前这台设备发布过的需求。',
+    mineHint: '本机发布的需求会显示在这里；换了设备可以用管理码找回。',
+    claimEntry: '用管理码找回',
+    claimLabel: '管理码',
+    claimPlaceholder: '粘贴发布时保存的管理码',
+    claimSubmit: '找回',
+    claimCancel: '取消',
+    claimEmpty: '请输入管理码',
+    claimWrong: '管理码不正确，找不到对应需求。',
+    claimDone: '已找回，加入本机「我的发布」',
     markTaken: '标记为已接单',
     markDone: '标记为已完成',
     statusUpdated: '状态已更新',
@@ -143,12 +153,13 @@ const I18N = {
       errand: 'Errand',
     },
     status: { open: 'Open', taken: 'Taken', done: 'Done' },
-    heroOpen: (n) => `${n} students`,
-    heroNeed: 'need a hand',
+    heroOpen: (n) => `${n} student${n === 1 ? '' : 's'}`,
+    heroNeed: (n) => (n === 1 ? 'needs a hand' : 'need a hand'),
     heroDone: (n) => `${n} matched so far`,
     heroLaunch1: 'Just launched',
-    heroLaunch2: 'Be the first to post',
-    glassSub: (n) => `${n} students need a hand`,
+    heroLaunch2: 'These are samples. Be the first to post',
+    brandWall: 'Demand Wall',
+    glassSub: (n) => `${n} student${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a hand`,
     introSub: 'Campus needs, one wall',
     timeJustNow: 'just now',
     timeMinutesAgo: (n) => `${n} min ago`,
@@ -189,10 +200,19 @@ const I18N = {
     successHint: 'Save the management code below to change this demand’s status later. It was saved to “My Posts” on this device.',
     manageCode: 'Management code',
     copyCode: 'Copy code',
+    codeRestoreHint: 'Use it to restore on a new phone',
     done: 'Done',
     mineTitle: 'My Posts',
     mineEmpty: 'No posts on this device yet. Your published demands will appear here.',
-    mineHint: 'Only shows demands published from this device.',
+    mineHint: 'Posts from this device appear here. On a new device, restore them with your management code.',
+    claimEntry: 'Restore with code',
+    claimLabel: 'Management code',
+    claimPlaceholder: 'Paste the code saved when posting',
+    claimSubmit: 'Restore',
+    claimCancel: 'Cancel',
+    claimEmpty: 'Enter the management code',
+    claimWrong: 'Incorrect code; no matching demand.',
+    claimDone: 'Restored to “My Posts” on this device',
     markTaken: 'Mark as taken',
     markDone: 'Mark as done',
     statusUpdated: 'Status updated',
@@ -211,7 +231,7 @@ const I18N = {
     errBlocked: 'Request blocked (403). Please open this site in a system browser and retry.',
     errCodeSuffix: (c) => ` (code: ${c})`,
     shareBtn: 'Copy share text',
-    shareCopied: 'Copied — paste it in your WeChat group',
+    shareCopied: 'Copied. Paste it in your group chat.',
     deepLinkMissing: 'This demand has been removed or does not exist',
     shareAppName: 'XMUM Demand Wall',
     shareStatusPrefix: 'Status: ',
@@ -516,7 +536,7 @@ function renderFeedError() {
 function filterDemands() {
   const q = state.search.trim().toLowerCase();
   return state.demands.filter((d) => {
-    if (state.openOnly && d.status !== 'open') return false;
+    if (state.openOnly && (d.status !== 'open' || isOverdue(d))) return false;
     if (state.category !== 'all' && d.category !== state.category) return false;
     if (!q) return true;
     return (d.title || '').toLowerCase().includes(q) || (d.description || '').toLowerCase().includes(q);
@@ -624,10 +644,10 @@ function updateHero() {
   const hero = $('#hero');
   if (hero) hero.classList.toggle('hero--skeleton', loading);
   if (l1) l1.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.heroOpen(c.open));
-  if (l2) l2.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.heroNeed);
+  if (l2) l2.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.heroNeed(c.open));
   if (l3) l3.textContent = loading || launched ? '' : COPY.heroDone(c.matched);
   const sub = $('#glassbar-sub');
-  if (sub) sub.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.glassSub(c.open));
+  if (sub) sub.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.glassSub(c.open));
 }
 
 /* ================= 弹窗基础 ================= */
@@ -779,7 +799,7 @@ function buildDetail(d) {
   if (d.is_sample) {
     // 示例帖：不获取联系方式、不可举报，引导发布真实需求
     contactBox.appendChild(el('p', 'sample-note', COPY.sampleNote));
-    const btnPost = el('button', 'btn btn-primary btn-block', COPY.publishTitle);
+    const btnPost = el('button', 'btn btn-secondary btn-block', COPY.publishTitle);
     btnPost.type = 'button';
     btnPost.addEventListener('click', () => { closeModal('#modal-detail'); openPublish(); });
     contactBox.appendChild(btnPost);
@@ -1074,11 +1094,13 @@ function buildSuccess(demand) {
   sheet.appendChild(el('p', 'success-hint', COPY.successHint));
 
   const codeBox = el('div', 'code-box');
+  codeBox.appendChild(el('span', 'code-label', COPY.manageCode));
   codeBox.appendChild(el('code', 'code-value', token));
-  const copyBtn = el('button', 'btn btn-primary', COPY.copyCode);
+  const copyBtn = el('button', 'btn btn-primary btn-block', COPY.copyCode);
   copyBtn.type = 'button';
   copyBtn.addEventListener('click', () => copyText(token, copyBtn));
   codeBox.appendChild(copyBtn);
+  const codeHint = el('p', 'code-hint', COPY.codeRestoreHint);
 
   const btnShare = el('button', 'btn btn-ghost btn-block', COPY.shareBtn);
   btnShare.type = 'button';
@@ -1090,7 +1112,7 @@ function buildSuccess(demand) {
   done.style.marginTop = '16px';
   done.addEventListener('click', () => closeModal('#modal-success'));
 
-  sheet.append(codeBox, btnShare, done);
+  sheet.append(codeBox, codeHint, btnShare, done);
 }
 
 function showSuccess(demand) {
@@ -1222,6 +1244,36 @@ async function openMine() {
 
   sheet.appendChild(el('p', 'detail-time', COPY.mineHint));
 
+  // 跨设备找回入口：输入管理码 → 服务端校验 → 加入本机「我的发布」
+  const claimWrap = el('div', 'mine-claim');
+  const claimToggle = el('button', 'btn btn-secondary btn-block', COPY.claimEntry);
+  claimToggle.type = 'button';
+  const claimBox = el('div', 'claim-box');
+  claimBox.hidden = true;
+  const claimLabel = el('label', 'form-label', COPY.claimLabel);
+  claimLabel.setAttribute('for', 'claim-input');
+  const claimInput = el('input', 'input');
+  claimInput.id = 'claim-input';
+  claimInput.type = 'text';
+  claimInput.autocomplete = 'off';
+  claimInput.placeholder = COPY.claimPlaceholder;
+  const claimActions = el('div', 'claim-actions');
+  const claimGo = el('button', 'btn btn-primary', COPY.claimSubmit);
+  claimGo.type = 'button';
+  const claimCancel = el('button', 'btn btn-ghost', COPY.claimCancel);
+  claimCancel.type = 'button';
+  claimActions.append(claimGo, claimCancel);
+  claimBox.append(claimLabel, claimInput, claimActions);
+  claimToggle.addEventListener('click', () => {
+    claimBox.hidden = !claimBox.hidden;
+    if (!claimBox.hidden) setTimeout(() => { try { claimInput.focus(); } catch { /* 忽略 */ } }, 50);
+  });
+  claimCancel.addEventListener('click', () => { claimBox.hidden = true; claimInput.value = ''; });
+  claimGo.addEventListener('click', () => submitClaim(claimInput.value, claimGo));
+  claimInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitClaim(claimInput.value, claimGo); } });
+  claimWrap.append(claimToggle, claimBox);
+  sheet.appendChild(claimWrap);
+
   const mine = readMine();
   if (!mine.length) {
     const box = el('div', 'feed-state');
@@ -1253,6 +1305,32 @@ async function openMine() {
 
   valid.sort((a, b) => (a.data.created_at < b.data.created_at ? 1 : -1));
   valid.forEach(({ mine, data }) => list.appendChild(mineItem(mine, data)));
+}
+
+async function submitClaim(rawToken, btn) {
+  const token = (rawToken || '').trim();
+  if (!token) { toast(COPY.claimEmpty); return; }
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const res = await request('/api/demands/claim', {
+      method: 'POST',
+      body: JSON.stringify({ manage_token: token }),
+    });
+    if (!res || typeof res.id !== 'string') throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
+    addMine(res.id, token);
+    toast(COPY.claimDone);
+    openMine(); // 重渲染，列表里出现找回的需求
+  } catch (err) {
+    toast(err.code === 'manage_token_invalid' ? COPY.claimWrong
+      : err.code === 'not_found' ? COPY.errNotFound
+      : err.code === 'rate_limited' ? COPY.errRateLimited
+      : err.code === 'network' ? COPY.errNetwork : COPY.errGeneric);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 function mineItem(mine, d) {
@@ -1340,6 +1418,17 @@ async function removeDemand(mine, d, item, btn) {
 function buildTabs() {
   buildTabList($('#tabs'));
   buildTabList($('#glass-tabs'));
+  updateTabsFade();
+}
+// 右缘渐隐：仅当可横向滑动且未滑到最右时显示
+function updateTabsFade() {
+  ['#tabs', '#glass-tabs'].forEach((sel) => {
+    const t = $(sel);
+    if (!t) return;
+    const canScroll = t.scrollWidth > t.clientWidth + 1;
+    const atEnd = t.scrollLeft + t.clientWidth >= t.scrollWidth - 1;
+    t.classList.toggle('fade-right', canScroll && !atEnd);
+  });
 }
 function buildTabList(container) {
   if (!container) return;
@@ -1624,6 +1713,8 @@ function setOpenOnly(on) {
 function renderStatic() {
   document.title = COPY.docTitle;
   $('#glassbar-title').textContent = COPY.appTitle;
+  const brandText = $('#brand-title .brand-logo-text');
+  if (brandText) brandText.textContent = COPY.brandWall;
   $('#btn-mine').textContent = COPY.headerMy;
   $('#glass-mine').textContent = COPY.headerMy;
   $('#btn-publish').textContent = COPY.headerPublish;
@@ -1700,7 +1791,7 @@ function buildBrandLogo() {
     svg.appendChild(p);
   });
   host.appendChild(svg);
-  host.appendChild(el('span', 'brand-logo-text', '需求墙'));
+  host.appendChild(el('span', 'brand-logo-text', COPY.brandWall));
 }
 
 /* 灌墨层：正弦波顶边，向下盖到 y=300；横向右端预留 1200 余量，抵消 introFill 的 -1200px 横移，保证盖满整个单词 */
@@ -1903,6 +1994,12 @@ function init() {
 
   bindSearch($('#search'));
   bindSearch($('#glass-search'));
+
+  ['#tabs', '#glass-tabs'].forEach((sel) => {
+    const t = $(sel);
+    if (t) t.addEventListener('scroll', updateTabsFade, { passive: true });
+  });
+  window.addEventListener('resize', updateTabsFade);
 
   backdropClick('#modal-detail', '.sheet');
   backdropClick('#modal-publish', '.sheet');

@@ -26,6 +26,7 @@ export function application({ db, BackendError, env = null }) {
   const CONTACT_WINDOW_MS = 60 * 1000, CONTACT_MAX = 20;
   const HELP_WINDOW_MS = 60 * 1000, HELP_MAX = 30;
   const REPORT_WINDOW_MS = 60 * 1000, REPORT_MAX = 20;
+  const CLAIM_WINDOW_MS = 60 * 1000, CLAIM_MAX = 10;
   const buckets = new Map();
   let lastSweep = Date.now();
 
@@ -164,6 +165,19 @@ export function application({ db, BackendError, env = null }) {
       }).select('id,category,title,description,contact,status,manage_token,created_at,help_count,is_sample'));
       if (!created || !created.length) fail('write_failed', 500);
       return Response.json(created[0], { status: 201 });
+    }
+
+    // 跨设备找回：校验 manage_token，只返回对应 id（绝不回传 token 本身）。
+    // 错误码也计入限流额度，防止暴力枚举管理码；每设备每分钟 10 次。
+    if (path === '/api/demands/claim' && request.method === 'POST') {
+      const body = await input(request);
+      const token = clean(body && body.manage_token, 64);
+      if (!token) fail('invalid_input', 400);
+      if (!hit('claim', sourceOf(request), CLAIM_MAX, CLAIM_WINDOW_MS).allowed) fail('rate_limited', 429);
+      const found = rows(await db.from('demands').select('id,hidden').eq('manage_token', token).limit(1));
+      if (!found || !found.length) fail('manage_token_invalid', 403);
+      if (found[0].hidden === true) fail('not_found', 404);
+      return Response.json({ id: found[0].id });
     }
 
     // 单独获取联系方式：详情页点击「查看联系方式」时调用（先按来源限流）

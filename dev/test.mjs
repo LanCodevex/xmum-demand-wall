@@ -310,4 +310,46 @@ assert(l5b.length === 1 && l5b[0].id === dTeam.id, '删示例后真实帖保留'
 r = await call5('GET', '/api/demands/22222222-2222-4222-8222-222222222201');
 assert(r.status === 404, '删示例后示例帖详情 404');
 
+// ---- 新增：跨设备找回 claim ----
+const db6 = createFakeDb();
+const call6 = mkCall(application({ db: db6, BackendError: FakeError }));
+
+// 25. 发布一条用于找回
+r = await call6('POST', '/api/demands', { category: 'study', title: '求自习搭子', description: '图书馆', contact: 'wx: claim' });
+assert(r.status === 201, '（claim）发布返回 201');
+const d6 = await r.json();
+
+// 26. 正确管理码找回：只返回 id，不回传 token/contact
+r = await call6('POST', '/api/demands/claim', { manage_token: d6.manage_token }, { 'x-dw-client': 'device-CL' });
+assert(r.status === 200, '（claim）正确管理码返回 200');
+const claimed = await r.json();
+assert(claimed.id === d6.id, '（claim）返回对应 id');
+assert(!('manage_token' in claimed) && !('contact' in claimed), '（claim）不回传 token/contact');
+
+// 27. 错误管理码 403；缺管理码 400
+r = await call6('POST', '/api/demands/claim', { manage_token: 'wrong-token' }, { 'x-dw-client': 'device-CL' });
+assert(r.status === 403 && (await r.json()).error === 'manage_token_invalid', '（claim）错误管理码 403');
+r = await call6('POST', '/api/demands/claim', {}, { 'x-dw-client': 'device-CL' });
+assert(r.status === 400, '（claim）缺管理码 400');
+
+// 28. 限流：同设备每分钟 10 次（错误码也占额度），第 11 次 429
+// 已用 2 次（正确1+错误1），再补 8 次错误凑满 10
+let claimStatuses = [];
+for (let i = 0; i < 8; i++) {
+  const rr = await call6('POST', '/api/demands/claim', { manage_token: 'bad-' + i }, { 'x-dw-client': 'device-CL' });
+  claimStatuses.push(rr.status);
+}
+assert(claimStatuses.every((s) => s === 403), '（claim）前 10 次内错误码返回 403');
+r = await call6('POST', '/api/demands/claim', { manage_token: d6.manage_token }, { 'x-dw-client': 'device-CL' });
+assert(r.status === 429 && (await r.json()).error === 'rate_limited', '（claim）同设备第 11 次触发 429');
+
+// 29. 不同设备不受限流影响
+r = await call6('POST', '/api/demands/claim', { manage_token: d6.manage_token }, { 'x-dw-client': 'device-CL2' });
+assert(r.status === 200 && (await r.json()).id === d6.id, '（claim）不同设备不受前者限流影响');
+
+// 30. 被隐藏的需求找回返回 404
+db6.tables.demands.find((x) => x.id === d6.id).hidden = true;
+r = await call6('POST', '/api/demands/claim', { manage_token: d6.manage_token }, { 'x-dw-client': 'device-CL3' });
+assert(r.status === 404, '（claim）被隐藏需求返回 404');
+
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);
