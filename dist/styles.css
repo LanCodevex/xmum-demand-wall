@@ -127,6 +127,7 @@ input, textarea, select { font-family: inherit; }
 .hero-line1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 1.15; color: var(--ink); }
 .hero-line2 { margin: 4px 0 0; font-size: 22px; font-weight: 600; line-height: 1.25; color: var(--ink); }
 .hero-line3 { margin: 8px 0 0; font-size: 13px; color: var(--meta); }
+.hero-note { margin-left: 4px; font-size: 12px; color: var(--meta); opacity: .85; }
 
 /* 首次加载：hero 数字显示灰色占位块（不显示 0） */
 .hero--skeleton .hero-line1,
@@ -738,10 +739,14 @@ body.admin #glassbar { display: none; }
   .backdrop { align-items: center; padding: 24px; }
   .sheet { border-radius: 20px; max-height: 84vh; max-height: 84dvh; }
   .footer { padding-bottom: 24px; }
+  /* 分类栏换行显示全部分类，不横向滑动、不显示渐隐遮罩 */
+  .tabs { flex-wrap: wrap; overflow-x: visible; }
+  .tabs.fade-right { -webkit-mask-image: none; mask-image: none; }
 }
 
 /* ===== 顶栏 logo（XMUM 字形 +「需求墙」） ===== */
-.brand-title { display: flex; align-items: center; gap: 5px; }
+.brand-title,
+.glassbar-title { display: flex; align-items: center; gap: 5px; }
 .brand-logo { height: 17px; width: auto; display: block; }
 .brand-logo-text { font-size: 15px; font-weight: 700; color: var(--ink); }
 

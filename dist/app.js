@@ -22,6 +22,7 @@ const I18N = {
     heroOpen: (n) => `${n} 位同学`,
     heroNeed: () => '正在找人帮忙',
     heroDone: (n) => `已经帮成 ${n} 单`,
+    heroNoSamples: '（不含示例）',
     heroLaunch1: '需求墙刚上线',
     heroLaunch2: '下面是示例，来发第一条真实需求吧',
     brandWall: '需求墙',
@@ -156,6 +157,7 @@ const I18N = {
     heroOpen: (n) => `${n} student${n === 1 ? '' : 's'}`,
     heroNeed: (n) => (n === 1 ? 'needs a hand' : 'need a hand'),
     heroDone: (n) => `${n} matched so far`,
+    heroNoSamples: '(samples not counted)',
     heroLaunch1: 'Just launched',
     heroLaunch2: 'These are samples. Be the first to post',
     brandWall: 'Demand Wall',
@@ -171,7 +173,7 @@ const I18N = {
     footer: 'Post what you need. Help where you can.',
     detailTitle: 'Demand details',
     close: 'Close',
-    viewContact: 'I can help',
+    viewContact: 'I can help · See contact',
     helpCount: (n) => `${n} can help`,
     sampleTag: 'Sample',
     sampleNote: 'This is a sample post showing how the wall works. Got a real need? Try posting one.',
@@ -634,7 +636,7 @@ function heroCounts() {
   const real = state.demands.filter((d) => !d.is_sample);
   const open = real.filter((d) => d.status === 'open' && !isOverdue(d)).length;
   const matched = real.filter((d) => d.status === 'taken' || d.status === 'done').length;
-  return { open, matched, real: real.length };
+  return { open, matched, real: real.length, samples: state.demands.length - real.length };
 }
 function updateHero() {
   const c = heroCounts();
@@ -645,7 +647,11 @@ function updateHero() {
   if (hero) hero.classList.toggle('hero--skeleton', loading);
   if (l1) l1.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.heroOpen(c.open));
   if (l2) l2.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.heroNeed(c.open));
-  if (l3) l3.textContent = loading || launched ? '' : COPY.heroDone(c.matched);
+  if (l3) {
+    l3.textContent = loading || launched ? '' : COPY.heroDone(c.matched);
+    // 计数只含真实帖；列表里仍有示例帖时加灰色说明，避免误解
+    if (!loading && c.real > 0 && c.samples > 0) l3.appendChild(el('span', 'hero-note', COPY.heroNoSamples));
+  }
   const sub = $('#glassbar-sub');
   if (sub) sub.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.glassSub(c.open));
 }
@@ -1712,9 +1718,9 @@ function setOpenOnly(on) {
 
 function renderStatic() {
   document.title = COPY.docTitle;
-  $('#glassbar-title').textContent = COPY.appTitle;
-  const brandText = $('#brand-title .brand-logo-text');
-  if (brandText) brandText.textContent = COPY.brandWall;
+  document.querySelectorAll('#brand-title .brand-logo-text, #glassbar-title .brand-logo-text').forEach((t) => {
+    t.textContent = COPY.brandWall;
+  });
   $('#btn-mine').textContent = COPY.headerMy;
   $('#glass-mine').textContent = COPY.headerMy;
   $('#btn-publish').textContent = COPY.headerPublish;
@@ -1775,9 +1781,12 @@ function glyphPath(letter) {
   return p;
 }
 
-/* 顶栏 logo：XMUM 字形（高 17px、填充墨蓝）+「需求墙」文字 */
+/* 顶栏 logo：XMUM 字形（高 17px、填充墨蓝）+「需求墙」文字；主顶栏与玻璃顶栏共用 */
 function buildBrandLogo() {
-  const host = $('#brand-title');
+  ['#brand-title', '#glassbar-title'].forEach(buildBrandLogoIn);
+}
+function buildBrandLogoIn(sel) {
+  const host = $(sel);
   if (!host || host.querySelector('.brand-logo')) return;
   host.textContent = '';
   const svg = svgEl('svg');
