@@ -57,7 +57,8 @@ const I18N = {
     formDescriptionPlaceholder: '补充时间、地点、数量等细节',
     formDescriptionPlaceholderTeam: '比赛或课程名称、还差几人、你能做什么',
     formContact: '联系方式',
-    formContactPlaceholder: '微信号或其他联系方式',
+    formContactPlaceholder: '选填：微信号等。不填的话，大家可以给你发私信',
+    formOptional: '（选填）',
     formSubmit: '发布需求',
     formCancel: '取消',
     charCount: (n, max) => `${n}/${max}`,
@@ -136,6 +137,32 @@ const I18N = {
     adminRestored: '已恢复显示',
     adminDemandMissing: '该需求已不存在',
     adminLoadError: '加载举报列表失败',
+    repliesTitle: '回复',
+    repliesCount: (n) => `回复 ${n}`,
+    repliesEmpty: '还没有回复，来说第一句吧',
+    repliesLoadError: '回复加载失败',
+    replyAnon: '匿名同学',
+    replyOwner: '发布者',
+    replyPlaceholder: '问问细节，或者说说你能怎么帮…',
+    replyPrivate: '仅发帖人可见',
+    replySend: '发送',
+    replySent: '已发送',
+    replySentPrivate: '私信已发送，只有发帖人能看到',
+    replyEmptyBody: '请先写点内容',
+    replyNoContact: '发帖人没留联系方式，可以发私信给 TA',
+    replyAsOwner: '你是发帖人，回复会带「发布者」标签并公开显示',
+    replyReport: '举报',
+    replyReported: '已举报，感谢反馈',
+    replyReportAlready: '你已经举报过这条回复',
+    replyErrInvalid: '回复需为 1–200 字',
+    replyErrSample: '示例帖不能回复',
+    privateCount: (n) => `私信 ${n}`,
+    privateNone: '暂无私信',
+    privateTitle: '私信（仅你可见）',
+    privateHide: '收起',
+    privateLoadError: '私信加载失败',
+    ownerReplyLabel: '以「发布者」身份公开回复',
+    ownerReplyPlaceholder: '公开回复，所有人可见…',
   },
   en: {
     appTitle: 'XMUM Demand Wall',
@@ -192,7 +219,8 @@ const I18N = {
     formDescriptionPlaceholder: 'Add time, place, quantity and details',
     formDescriptionPlaceholderTeam: 'Contest or course name, how many more people you need, what you can do',
     formContact: 'Contact',
-    formContactPlaceholder: 'WeChat ID or other contact',
+    formContactPlaceholder: 'Optional: WeChat ID, etc. If left blank, people can send you private messages',
+    formOptional: ' (optional)',
     formSubmit: 'Post',
     formCancel: 'Cancel',
     charCount: (n, max) => `${n}/${max}`,
@@ -272,6 +300,32 @@ const I18N = {
     adminRestored: 'Restored',
     adminDemandMissing: 'This demand no longer exists',
     adminLoadError: 'Failed to load reports',
+    repliesTitle: 'Replies',
+    repliesCount: (n) => `Replies ${n}`,
+    repliesEmpty: 'No replies yet. Be the first to say something.',
+    repliesLoadError: 'Could not load replies',
+    replyAnon: 'Anonymous student',
+    replyOwner: 'Poster',
+    replyPlaceholder: 'Ask for details, or say how you can help…',
+    replyPrivate: 'Only the poster can see this',
+    replySend: 'Send',
+    replySent: 'Sent',
+    replySentPrivate: 'Private message sent. Only the poster can see it.',
+    replyEmptyBody: 'Please write something first',
+    replyNoContact: 'The poster left no contact. You can send them a private message.',
+    replyAsOwner: 'You posted this. Your reply is public and tagged “Poster”.',
+    replyReport: 'Report',
+    replyReported: 'Reported. Thanks for the feedback.',
+    replyReportAlready: 'You already reported this reply',
+    replyErrInvalid: 'Replies must be 1–200 characters',
+    replyErrSample: 'Sample posts can’t be replied to',
+    privateCount: (n) => `Private messages ${n}`,
+    privateNone: 'No private messages yet',
+    privateTitle: 'Private messages (only you can see)',
+    privateHide: 'Hide',
+    privateLoadError: 'Could not load private messages',
+    ownerReplyLabel: 'Reply publicly as the poster',
+    ownerReplyPlaceholder: 'Public reply, visible to everyone…',
   },
 };
 
@@ -299,7 +353,9 @@ const API = '/functions/v1/app';
 const MINE_KEY = 'xmum_demand_wall_mine';
 const CLIENT_KEY = 'xmum_demand_wall_client';
 const CLIENT_HEADER = 'x-dw-client'; // 匿名设备令牌，作为服务端防刷的「来源」主键
-const LIMITS = { title: 40, description: 500, contact: 50 };
+const LIMITS = { title: 40, description: 500, contact: 50, reply: 200 };
+const REPLY_REPORTED_KEY = 'xmum_demand_wall_reply_reported'; // 本机举报过的回复，用于同设备去重
+const replyDrafts = new Map(); // 切换语言重建详情时保留未发送的回复草稿：demandId -> { body, isPrivate }
 const OPEN_ONLY_KEY = 'xmum_demand_wall_open_only';
 const HELPED_KEY = 'xmum_demand_wall_helped'; // 本机「我能帮」过的需求，用于同设备去重
 const REPORTED_KEY = 'xmum_demand_wall_reported'; // 本机举报过的需求，用于同设备去重
@@ -801,8 +857,12 @@ function buildDetail(d) {
   const desc = el('p', 'detail-desc', d.description);
   const time = el('p', 'detail-time', relTime(d.created_at));
 
+  // 没留联系方式的真实帖：不显示「我能帮，看联系方式」，改由回复区引导发私信
+  const noContact = !d.is_sample && d.has_contact === false;
   const contactBox = el('div', 'contact-box');
-  if (d.is_sample) {
+  if (noContact) {
+    contactBox.hidden = true;
+  } else if (d.is_sample) {
     // 示例帖：不获取联系方式、不可举报，引导发布真实需求
     contactBox.appendChild(el('p', 'sample-note', COPY.sampleNote));
     const btnPost = el('button', 'btn btn-secondary btn-block', COPY.publishTitle);
@@ -829,7 +889,169 @@ function buildDetail(d) {
   reportRow.appendChild(btnReport);
 
   if (d.is_sample) sheet.append(head, meta, title, desc, time, contactBox, shareWrap);
-  else sheet.append(head, meta, title, desc, time, contactBox, shareWrap, reportRow);
+  else sheet.append(head, meta, title, desc, time, contactBox, shareWrap, buildReplies(d, noContact), reportRow);
+}
+
+/* ================= 回复（公开回复 + 仅发帖人可见的私信） ================= */
+function replyErrText(err) {
+  const code = (err && err.code) || 'generic';
+  if (code === 'invalid_input') return COPY.replyErrInvalid;
+  if (code === 'sample_post') return COPY.replyErrSample;
+  if (code === 'rate_limited') return COPY.errRateLimited;
+  if (code === 'manage_token_invalid') return COPY.errManageToken;
+  if (code === 'not_found') return COPY.errNotFound;
+  if (code === 'network') return COPY.errNetwork;
+  return COPY.errGeneric;
+}
+
+function mineTokenFor(id) {
+  const m = readMine().find((x) => x.id === id);
+  return m ? m.token : null;
+}
+
+// 单条回复：标签 + 相对时间 + 低调「举报」+ 正文，全部 textContent
+function replyItem(r, opts) {
+  const o = opts || {};
+  const item = el('div', 'reply-item');
+  const top = el('div', 'reply-top');
+  if (!o.hideTag) top.appendChild(el('span', r.is_owner ? 'reply-tag reply-tag--owner' : 'reply-tag', r.is_owner ? COPY.replyOwner : COPY.replyAnon));
+  top.appendChild(el('span', 'reply-time', relTime(r.created_at)));
+  if (!r.is_owner && !readSet(REPLY_REPORTED_KEY).has(r.id)) {
+    const btn = el('button', 'btn-report reply-report', COPY.replyReport);
+    btn.type = 'button';
+    btn.addEventListener('click', () => reportReply(r, btn));
+    top.appendChild(btn);
+  }
+  item.append(top, el('p', 'reply-body', r.body));
+  return item;
+}
+
+async function reportReply(r, btn) {
+  if (readSet(REPLY_REPORTED_KEY).has(r.id)) { toast(COPY.replyReportAlready); btn.remove(); return; }
+  btn.disabled = true;
+  try {
+    await request(`/api/replies/${r.id}/report`, { method: 'POST' });
+    addToSet(REPLY_REPORTED_KEY, r.id);
+    btn.remove();
+    toast(COPY.replyReported);
+  } catch (err) {
+    if (err.code === 'already_reported') { addToSet(REPLY_REPORTED_KEY, r.id); btn.remove(); toast(COPY.replyReportAlready); return; }
+    btn.disabled = false;
+    toast(err.code === 'rate_limited' ? COPY.errRateLimited
+      : err.code === 'network' ? COPY.errNetwork : COPY.reportFailed);
+  }
+}
+
+function renderReplyList(list, replies) {
+  list.innerHTML = '';
+  if (!replies.length) { list.appendChild(el('p', 'reply-empty', COPY.repliesEmpty)); return; }
+  replies.forEach((r) => list.appendChild(replyItem(r)));
+}
+
+async function loadReplies(d, list, heading) {
+  list.innerHTML = '';
+  list.appendChild(loadingNode());
+  try {
+    const data = await request(`/api/demands/${d.id}/replies`);
+    if (state.activeId !== d.id) return; // 弹窗已切走
+    const replies = Array.isArray(data) ? data : [];
+    heading.textContent = replies.length ? COPY.repliesCount(replies.length) : COPY.repliesTitle;
+    renderReplyList(list, replies);
+  } catch {
+    list.innerHTML = '';
+    const err = el('p', 'reply-empty', COPY.repliesLoadError + ' · ');
+    const retry = el('button', 'btn-report', COPY.retry);
+    retry.type = 'button';
+    retry.addEventListener('click', () => loadReplies(d, list, heading));
+    err.appendChild(retry);
+    list.appendChild(err);
+  }
+}
+
+// 回复输入框（详情页与「我的发布」共用）：textarea + 字数统计 + 可选「仅发帖人可见」+ 发送
+function replyComposer({ placeholder, showPrivate, privateDefault, draftKey, onSend }) {
+  const box = el('div', 'reply-form');
+  const ta = el('textarea', 'textarea reply-input');
+  ta.placeholder = placeholder;
+  ta.maxLength = LIMITS.reply;
+  ta.rows = 3;
+  const draft = draftKey ? replyDrafts.get(draftKey) : null;
+  if (draft) ta.value = draft.body;
+  const count = el('span', 'char-count', COPY.charCount(ta.value.length, LIMITS.reply));
+  const row = el('div', 'reply-form-row');
+  let cb = null;
+  if (showPrivate) {
+    const lbl = el('label', 'reply-private');
+    cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = draft ? draft.isPrivate : !!privateDefault;
+    lbl.append(cb, el('span', null, COPY.replyPrivate));
+    row.appendChild(lbl);
+  } else {
+    row.appendChild(el('span'));
+  }
+  const send = el('button', 'btn btn-primary btn-sm', COPY.replySend);
+  send.type = 'button';
+  row.appendChild(send);
+  const saveDraft = () => { if (draftKey) replyDrafts.set(draftKey, { body: ta.value, isPrivate: cb ? cb.checked : false }); };
+  ta.addEventListener('input', () => {
+    count.textContent = COPY.charCount(ta.value.length, LIMITS.reply);
+    count.classList.toggle('over', ta.value.length >= LIMITS.reply);
+    saveDraft();
+  });
+  if (cb) cb.addEventListener('change', saveDraft);
+  send.addEventListener('click', async () => {
+    const body = ta.value.trim();
+    if (!body) { toast(COPY.replyEmptyBody); return; }
+    send.disabled = true;
+    const original = send.textContent;
+    send.textContent = '…';
+    try {
+      await onSend(body, cb ? cb.checked : false);
+      ta.value = '';
+      count.textContent = COPY.charCount(0, LIMITS.reply);
+      count.classList.remove('over');
+      if (draftKey) replyDrafts.delete(draftKey);
+    } catch (err) {
+      toast(replyErrText(err));
+    } finally {
+      send.disabled = false;
+      send.textContent = original;
+    }
+  });
+  box.append(ta, count, row);
+  return box;
+}
+
+function buildReplies(d, noContact) {
+  const section = el('section', 'replies');
+  const heading = el('h4', 'replies-title', COPY.repliesTitle);
+  const list = el('div', 'reply-list');
+  section.append(heading, list);
+
+  const token = mineTokenFor(d.id);
+  if (token) section.appendChild(el('p', 'reply-hint', COPY.replyAsOwner));
+  else if (noContact) section.appendChild(el('p', 'reply-hint reply-hint--strong', COPY.replyNoContact));
+
+  section.appendChild(replyComposer({
+    placeholder: token ? COPY.ownerReplyPlaceholder : COPY.replyPlaceholder,
+    showPrivate: !token,
+    privateDefault: noContact,
+    draftKey: d.id,
+    onSend: async (body, isPrivate) => {
+      const created = await request(`/api/demands/${d.id}/replies`, {
+        method: 'POST',
+        body: JSON.stringify({ body, is_private: isPrivate }),
+        ...(token ? { headers: { 'x-manage-token': token } } : {}),
+      });
+      if (created && created.is_private) { toast(COPY.replySentPrivate); return; }
+      toast(COPY.replySent);
+      loadReplies(d, list, heading);
+    },
+  }));
+
+  loadReplies(d, list, heading);
+  return section;
 }
 
 async function revealContact(d, box, btnView) {
@@ -1012,7 +1234,7 @@ function buildPublishForm() {
   // 联系方式
   const fContact = el('div', 'form-field');
   const lContact = el('label', 'form-label', COPY.formContact);
-  lContact.appendChild(el('span', 'req', ' *'));
+  lContact.appendChild(el('span', 'optional', COPY.formOptional));
   const iContact = el('input', 'input');
   iContact.type = 'text';
   iContact.placeholder = COPY.formContactPlaceholder;
@@ -1054,7 +1276,7 @@ async function submitPublish(btn, fields) {
   const title = fields.iTitle.value.trim();
   const description = fields.tDesc.value.trim();
   const contact = fields.iContact.value.trim();
-  if (!title || !description || !contact) { toast(COPY.requiredField); return; }
+  if (!title || !description) { toast(COPY.requiredField); return; }
 
   btn.disabled = true;
   const original = btn.textContent;
@@ -1347,6 +1569,52 @@ function mineItem(mine, d) {
   const title = el('p', 'mine-item-title', d.title);
   item.append(top, title);
   if (numCount(d.help_count) > 0) item.appendChild(el('p', 'mine-item-help', COPY.helpCount(numCount(d.help_count))));
+
+  // 私信：显示数量，点开查看列表，并可以「发布者」身份公开回复
+  const priv = el('div', 'mine-private');
+  const privToggle = el('button', 'btn btn-secondary btn-sm mine-private-toggle', COPY.privateCount('…'));
+  privToggle.type = 'button';
+  privToggle.disabled = true;
+  const privPanel = el('div', 'mine-private-panel');
+  privPanel.hidden = true;
+  priv.append(privToggle, privPanel);
+  item.appendChild(priv);
+  let privList = [];
+  const renderPrivPanel = () => {
+    privPanel.innerHTML = '';
+    privPanel.appendChild(el('p', 'form-label', COPY.privateTitle));
+    if (!privList.length) privPanel.appendChild(el('p', 'reply-empty', COPY.privateNone));
+    else privList.forEach((r) => privPanel.appendChild(replyItem(r, { hideTag: true })));
+    privPanel.appendChild(el('p', 'form-label mine-owner-label', COPY.ownerReplyLabel));
+    privPanel.appendChild(replyComposer({
+      placeholder: COPY.ownerReplyPlaceholder,
+      showPrivate: false,
+      onSend: async (body) => {
+        await request(`/api/demands/${mine.id}/replies`, {
+          method: 'POST',
+          body: JSON.stringify({ body, is_private: false }),
+          headers: { 'x-manage-token': mine.token },
+        });
+        toast(COPY.replySent);
+      },
+    }));
+  };
+  const syncToggle = () => {
+    privToggle.textContent = privPanel.hidden ? COPY.privateCount(privList.length) : COPY.privateHide;
+  };
+  privToggle.addEventListener('click', () => {
+    privPanel.hidden = !privPanel.hidden;
+    if (!privPanel.hidden) renderPrivPanel();
+    syncToggle();
+  });
+  request(`/api/demands/${mine.id}/replies/private`, { headers: { 'x-manage-token': mine.token } })
+    .then((data) => {
+      privList = Array.isArray(data) ? data : [];
+      privToggle.disabled = false;
+      privToggle.classList.toggle('has-new', privList.length > 0);
+      syncToggle();
+    })
+    .catch(() => { privToggle.textContent = COPY.privateLoadError; });
 
   const actions = el('div', 'mine-item-actions');
   if (d.status === 'open') {

@@ -11,7 +11,11 @@ export function application({ db, BackendError, env = null }) {
   // 对外公开字段：不包含 contact / manage_token / hidden
   const PUBLIC_COLUMNS = 'id,category,title,description,status,created_at,help_count,is_sample';
   const LIST_COLUMNS = PUBLIC_COLUMNS + ',hidden';
-  const LIMITS = { title: 40, description: 500, contact: 50, list: 300 };
+  // 列表/详情内部多取 contact，只用来算出 has_contact，随后在 publicRow 里剥离
+  const FEED_COLUMNS = LIST_COLUMNS + ',contact';
+  // 回复对外字段：不含 is_private / report_count / hidden
+  const REPLY_COLUMNS = 'id,body,is_owner,created_at';
+  const LIMITS = { title: 40, description: 500, contact: 50, list: 300, reply: 200, replyList: 200 };
 
   const fail = (code, status) => { throw new BackendError(code, status); };
   const rows = (result) => {
@@ -27,13 +31,16 @@ export function application({ db, BackendError, env = null }) {
   const HELP_WINDOW_MS = 60 * 1000, HELP_MAX = 30;
   const REPORT_WINDOW_MS = 60 * 1000, REPORT_MAX = 20;
   const CLAIM_WINDOW_MS = 60 * 1000, CLAIM_MAX = 10;
+  // 回复：每设备每分钟 5 条、每小时 30 条（两档共用一个桶，同时满足才放行）
+  const REPLY_TIERS = [{ max: 5, windowMs: 60 * 1000 }, { max: 30, windowMs: 60 * 60 * 1000 }];
   const buckets = new Map();
   let lastSweep = Date.now();
 
   function sweep(now) {
     if (now - lastSweep < 60 * 1000) return;
     lastSweep = now;
-    const maxAge = Math.max(POST_WINDOW_MS, CONTACT_WINDOW_MS, HELP_WINDOW_MS, REPORT_WINDOW_MS);
+    const maxAge = Math.max(POST_WINDOW_MS, CONTACT_WINDOW_MS, HELP_WINDOW_MS, REPORT_WINDOW_MS,
+      ...REPLY_TIERS.map((t) => t.windowMs));
     for (const [key, arr] of buckets) {
       const kept = arr.filter((t) => now - t < maxAge);
       if (kept.length) buckets.set(key, kept); else buckets.delete(key);
@@ -49,6 +56,24 @@ export function application({ db, BackendError, env = null }) {
     if (arr.length >= max) {
       buckets.set(key, arr);
       return { allowed: false, retryAfterMs: windowMs - (now - arr[0]) };
+    }
+    arr.push(now);
+    buckets.set(key, arr);
+    return { allowed: true };
+  }
+
+  // 多档限流：所有档位都未超限才计数一次，避免某档拒绝时其他档白白占额度
+  function hitTiers(scope, src, tiers) {
+    const now = Date.now();
+    sweep(now);
+    const key = scope + ':' + src;
+    const longest = Math.max(...tiers.map((t) => t.windowMs));
+    const arr = (buckets.get(key) || []).filter((t) => now - t < longest);
+    for (const t of tiers) {
+      if (arr.filter((x) => now - x < t.windowMs).length >= t.max) {
+        buckets.set(key, arr);
+        return { allowed: false };
+      }
     }
     arr.push(now);
     buckets.set(key, arr);
@@ -101,7 +126,9 @@ export function application({ db, BackendError, env = null }) {
   // help_count / hidden 由 migration 以「可空、无默认」方式新增，旧行可能为 NULL，这里统一归一并剥离内部字段
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   const publicRow = (d) => {
-    const { hidden, ...rest } = d;
+    const { hidden, contact, ...rest } = d;
+    // 只透出「有没有联系方式」，不透出联系方式本身
+    rest.has_contact = typeof contact === 'string' && contact.trim() !== '';
     rest.help_count = num(rest.help_count);
     rest.is_sample = rest.is_sample === true;
     return rest;
@@ -118,10 +145,19 @@ export function application({ db, BackendError, env = null }) {
   };
 
   async function getDemand(id) {
-    const found = rows(await db.from('demands').select(LIST_COLUMNS).eq('id', id).limit(1));
+    const found = rows(await db.from('demands').select(FEED_COLUMNS).eq('id', id).limit(1));
     if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
     return publicRow(found[0]);
   }
+
+  // 回复用：取需求的内部字段（含 manage_token，仅在服务端比对，绝不返回）
+  async function getDemandInternal(id) {
+    const found = rows(await db.from('demands').select('id,hidden,is_sample,manage_token').eq('id', id).limit(1));
+    if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
+    return found[0];
+  }
+  const tokenMatches = (demand, token) => typeof token === 'string' && token !== ''
+    && typeof demand.manage_token === 'string' && demand.manage_token === token;
 
   return async (ctx) => {
     const request = ctx.request;
@@ -137,7 +173,7 @@ export function application({ db, BackendError, env = null }) {
 
     // 列表：按时间倒序，不含 contact / manage_token / hidden
     if (path === '/api/demands' && request.method === 'GET') {
-      const raw = rows(await db.from('demands').select(LIST_COLUMNS)
+      const raw = rows(await db.from('demands').select(FEED_COLUMNS)
         .order('created_at', { ascending: false }).limit(LIMITS.list));
       const list = (Array.isArray(raw) ? raw : []).filter((d) => d.hidden !== true).map(publicRow);
       return Response.json(list);
@@ -150,8 +186,16 @@ export function application({ db, BackendError, env = null }) {
       if (!CATEGORIES.includes(category)) fail('invalid_input', 400);
       const title = clean(body && body.title, LIMITS.title);
       const description = clean(body && body.description, LIMITS.description);
-      const contact = clean(body && body.contact, LIMITS.contact);
-      if (!title || !description || !contact) fail('invalid_input', 400);
+      if (!title || !description) fail('invalid_input', 400);
+      // 联系方式选填：缺省/空白 → null；有内容则必须是字符串且 ≤50 字
+      const rawContact = body && body.contact;
+      let contact = null;
+      if (rawContact !== undefined && rawContact !== null) {
+        if (typeof rawContact !== 'string') fail('invalid_input', 400);
+        const t = rawContact.trim();
+        if (t.length > LIMITS.contact) fail('invalid_input', 400);
+        contact = t || null;
+      }
 
       // 通过输入校验后再计一次发布配额（非法请求不占用额度）
       if (!hit('post', sourceOf(request), POST_MAX, POST_WINDOW_MS).allowed) fail('rate_limited', 429);
@@ -164,7 +208,9 @@ export function application({ db, BackendError, env = null }) {
         help_count: 0, hidden: false, is_sample: false,
       }).select('id,category,title,description,contact,status,manage_token,created_at,help_count,is_sample'));
       if (!created || !created.length) fail('write_failed', 500);
-      return Response.json(created[0], { status: 201 });
+      const out = { ...created[0] };
+      out.has_contact = typeof out.contact === 'string' && out.contact.trim() !== '';
+      return Response.json(out, { status: 201 });
     }
 
     // 跨设备找回：校验 manage_token，只返回对应 id（绝不回传 token 本身）。
@@ -225,6 +271,7 @@ export function application({ db, BackendError, env = null }) {
       const found = rows(await db.from('demands').select('id,contact,hidden,help_count,is_sample').eq('id', helpMatch[1]).limit(1));
       if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
       if (found[0].is_sample === true) fail('sample_post', 400);
+      if (typeof found[0].contact !== 'string' || !found[0].contact.trim()) fail('no_contact', 400);
       const next = num(found[0].help_count) + 1;
       const updated = rows(await db.from('demands').update({ help_count: next }).eq('id', helpMatch[1]).select('id,help_count'));
       if (!updated || !updated.length) fail('write_failed', 500);
@@ -256,6 +303,86 @@ export function application({ db, BackendError, env = null }) {
       return Response.json({ ok: true });
     }
 
+    // ---- 回复 ----
+    // 公开回复列表：只返回 is_private=false 且未隐藏的，按时间正序
+    const repliesMatch = path.match(/^\/api\/demands\/([0-9a-f-]{36})\/replies$/);
+    if (repliesMatch && isUuid(repliesMatch[1]) && request.method === 'GET') {
+      const demand = await getDemandInternal(repliesMatch[1]);
+      if (demand.is_sample === true) return Response.json([]);
+      const list = rows(await db.from('replies').select(REPLY_COLUMNS + ',is_private,hidden')
+        .eq('demand_id', demand.id).eq('is_private', false)
+        .order('created_at', { ascending: true }).limit(LIMITS.replyList));
+      const out = (Array.isArray(list) ? list : [])
+        .filter((x) => x.is_private !== true && x.hidden !== true)
+        .map((x) => ({ id: x.id, body: x.body, is_owner: x.is_owner === true, created_at: x.created_at }));
+      return Response.json(out);
+    }
+
+    // 发表回复：带正确 x-manage-token 即以「发布者」身份（公开）回复；带了但不正确 → 403
+    if (repliesMatch && isUuid(repliesMatch[1]) && request.method === 'POST') {
+      const payload = await input(request);
+      const text = clean(payload && payload.body, LIMITS.reply);
+      if (!text) fail('invalid_input', 400);
+      const rawPrivate = payload && payload.is_private;
+      if (rawPrivate !== undefined && typeof rawPrivate !== 'boolean') fail('invalid_input', 400);
+      const demand = await getDemandInternal(repliesMatch[1]);
+      if (demand.is_sample === true) fail('sample_post', 400);
+      const token = request.headers.get('x-manage-token') || '';
+      let isOwner = false;
+      if (token) {
+        if (!tokenMatches(demand, token)) fail('manage_token_invalid', 403);
+        isOwner = true;
+      }
+      // 发帖人给自己发私信没有意义：发布者回复一律公开
+      const isPrivate = isOwner ? false : rawPrivate === true;
+      if (!hitTiers('reply', sourceOf(request), REPLY_TIERS).allowed) fail('rate_limited', 429);
+      const created = rows(await db.from('replies').insert({
+        id: crypto.randomUUID(), demand_id: demand.id, body: text,
+        is_private: isPrivate, is_owner: isOwner, report_count: 0, hidden: false,
+        created_at: new Date().toISOString(),
+      }).select(REPLY_COLUMNS + ',is_private'));
+      if (!created || !created.length) fail('write_failed', 500);
+      const r = created[0];
+      return Response.json({
+        id: r.id, body: r.body, is_owner: r.is_owner === true, is_private: r.is_private === true, created_at: r.created_at,
+      }, { status: 201 });
+    }
+
+    // 私信列表：仅发帖人（x-manage-token 正确）可见
+    const privateMatch = path.match(/^\/api\/demands\/([0-9a-f-]{36})\/replies\/private$/);
+    if (privateMatch && isUuid(privateMatch[1]) && request.method === 'GET') {
+      const demand = await getDemandInternal(privateMatch[1]);
+      if (!tokenMatches(demand, request.headers.get('x-manage-token') || '')) fail('manage_token_invalid', 403);
+      const list = rows(await db.from('replies').select(REPLY_COLUMNS + ',is_private,hidden')
+        .eq('demand_id', demand.id).eq('is_private', true)
+        .order('created_at', { ascending: true }).limit(LIMITS.replyList));
+      const out = (Array.isArray(list) ? list : [])
+        .filter((x) => x.is_private === true && x.hidden !== true)
+        .map((x) => ({ id: x.id, body: x.body, created_at: x.created_at }));
+      return Response.json(out);
+    }
+
+    // 举报回复：同设备对同一条只能一次；report_count 达到 3 自动隐藏
+    const replyReportMatch = path.match(/^\/api\/replies\/([0-9a-f-]{36})\/report$/);
+    if (replyReportMatch && isUuid(replyReportMatch[1]) && request.method === 'POST') {
+      if (!hit('report', sourceOf(request), REPORT_MAX, REPORT_WINDOW_MS).allowed) fail('rate_limited', 429);
+      const id = replyReportMatch[1];
+      const found = rows(await db.from('replies').select('id,hidden').eq('id', id).limit(1));
+      if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
+      const device = sourceOf(request);
+      const prior = rows(await db.from('reply_reports').select('id').eq('reply_id', id).eq('device', device).limit(1));
+      if (prior && prior.length) fail('already_reported', 409);
+      rows(await db.from('reply_reports').insert({
+        id: crypto.randomUUID(), reply_id: id, device, created_at: new Date().toISOString(),
+      }).select('id'));
+      const all = rows(await db.from('reply_reports').select('device').eq('reply_id', id));
+      const count = new Set((Array.isArray(all) ? all : []).map((x) => x.device)).size;
+      const patch = { report_count: count };
+      if (count >= HIDE_THRESHOLD) patch.hidden = true;
+      rows(await db.from('replies').update(patch).eq('id', id).select('id'));
+      return Response.json({ ok: true });
+    }
+
     // ---- 管理员（x-admin-key 头携带 ADMIN_KEY）----
     // 举报列表：按需求聚合，附带需求信息与举报理由
     if (path === '/api/admin/reports' && request.method === 'GET') {
@@ -283,6 +410,15 @@ export function application({ db, BackendError, env = null }) {
     if (adminDelMatch && isUuid(adminDelMatch[1]) && request.method === 'DELETE') {
       requireAdmin(request);
       const deleted = rows(await db.from('demands').delete().eq('id', adminDelMatch[1]).select('id'));
+      if (!deleted || !deleted.length) fail('not_found', 404);
+      return Response.json({ ok: true, id: deleted[0].id });
+    }
+
+    // 管理员：删除任意回复（含私信）
+    const adminReplyDelMatch = path.match(/^\/api\/admin\/replies\/([0-9a-f-]{36})$/);
+    if (adminReplyDelMatch && isUuid(adminReplyDelMatch[1]) && request.method === 'DELETE') {
+      requireAdmin(request);
+      const deleted = rows(await db.from('replies').delete().eq('id', adminReplyDelMatch[1]).select('id'));
       if (!deleted || !deleted.length) fail('not_found', 404);
       return Response.json({ ok: true, id: deleted[0].id });
     }

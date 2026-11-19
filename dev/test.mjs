@@ -8,7 +8,7 @@ class FakeError extends Error {
 
 // 多表内存假 DB：支持 demands / reports，支持 eq / in / order / limit / insert / update / delete。
 function createFakeDb() {
-  const tables = { demands: [], reports: [] };
+  const tables = { demands: [], reports: [], replies: [], reply_reports: [] };
   return {
     tables,
     from(table) {
@@ -351,5 +351,154 @@ assert(r.status === 200 && (await r.json()).id === d6.id, '（claim）不同设�
 db6.tables.demands.find((x) => x.id === d6.id).hidden = true;
 r = await call6('POST', '/api/demands/claim', { manage_token: d6.manage_token }, { 'x-dw-client': 'device-CL3' });
 assert(r.status === 404, '（claim）被隐藏需求返回 404');
+
+// ---- 新增：联系方式选填 / 回复 / 私信 / 回复举报 / 管理员删回复 ----
+const db7 = createFakeDb();
+const call7 = mkCall(application({ db: db7, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
+
+// 31. 联系方式选填：不填可发布，has_contact=false；超长仍拒绝；详情不泄露 contact
+r = await call7('POST', '/api/demands', { category: 'study', title: '求高数笔记', description: '第三章' });
+assert(r.status === 201, '（回复）不填联系方式可发布');
+const d7 = await r.json();
+assert(d7.contact === null && d7.has_contact === false, '（回复）无联系方式存为 null，has_contact=false');
+r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: '   ' });
+assert(r.status === 201 && (await r.json()).has_contact === false, '（回复）空白联系方式视为未填');
+r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 'x'.repeat(51) });
+assert(r.status === 400, '（回复）联系方式超 50 字被拒绝');
+r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 123 });
+assert(r.status === 400, '（回复）联系方式非字符串被拒绝');
+r = await call7('POST', '/api/demands', { category: 'study', title: '有联系方式', description: 'd', contact: 'wx: r' });
+const d7c = await r.json();
+r = await call7('GET', `/api/demands/${d7.id}`);
+let det7 = await r.json();
+assert(det7.has_contact === false && !('contact' in det7), '（回复）详情返回 has_contact=false 且不含 contact');
+r = await call7('GET', '/api/demands');
+const l7 = await r.json();
+assert(l7.find((x) => x.id === d7c.id).has_contact === true && l7.every((x) => !('contact' in x)), '（回复）列表 has_contact 正确且不含 contact');
+r = await call7('POST', `/api/demands/${d7.id}/help`, undefined, { 'x-dw-client': 'dev-R0' });
+assert(r.status === 400 && (await r.json()).error === 'no_contact', '（回复）无联系方式的需求 help 返回 no_contact');
+
+// 32. 发表公开回复 / 私信；去首尾空格
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '  我有笔记  ', is_private: false }, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 201, '（回复）公开回复返回 201');
+const pub1 = await r.json();
+assert(pub1.body === '我有笔记' && pub1.is_owner === false && pub1.is_private === false, '（回复）去首尾空格，is_owner=false');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '私下发你', is_private: true }, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 201 && (await r.json()).is_private === true, '（回复）私信返回 201');
+
+// 33. 输入校验：空、纯空白、超长、is_private 类型错误
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '   ' }, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 400, '（回复）空白内容被拒绝');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, {}, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 400, '（回复）缺 body 被拒绝');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '字'.repeat(201) }, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 400, '（回复）超 200 字被拒绝');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '字'.repeat(200) }, { 'x-dw-client': 'dev-R9' });
+assert(r.status === 201, '（回复）恰好 200 字可发');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: 'x', is_private: 'yes' }, { 'x-dw-client': 'dev-R1' });
+assert(r.status === 400, '（回复）is_private 非布尔被拒绝');
+
+// 34. 管理码：正确 → 发布者回复（强制公开）；错误 → 403
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '谢谢，已私信你', is_private: true }, { 'x-dw-client': 'dev-OWN', 'x-manage-token': d7.manage_token });
+const own = await r.json();
+assert(r.status === 201 && own.is_owner === true && own.is_private === false, '（回复）正确管理码以发布者身份公开回复');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '冒充' }, { 'x-dw-client': 'dev-R2', 'x-manage-token': 'wrong' });
+assert(r.status === 403 && (await r.json()).error === 'manage_token_invalid', '（回复）错误管理码返回 403');
+r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '跨帖冒充' }, { 'x-dw-client': 'dev-R2', 'x-manage-token': d7c.manage_token });
+assert(r.status === 403, '（回复）别的需求的管理码无效');
+
+// 35. 公开列表：只含公开、正序、不含内部字段
+r = await call7('GET', `/api/demands/${d7.id}/replies`);
+let pubList = await r.json();
+assert(r.status === 200 && pubList.length === 3, '（回复）公开列表不含私信');
+assert(pubList[0].body === '我有笔记' && pubList[2].is_owner === true, '（回复）按时间正序，发布者标记正确');
+assert(pubList.every((x) => !('is_private' in x) && !('hidden' in x) && !('report_count' in x)), '（回复）公开列表不返回内部字段');
+
+// 36. 私信列表：必须正确管理码
+r = await call7('GET', `/api/demands/${d7.id}/replies/private`);
+assert(r.status === 403, '（回复）缺管理码看私信返回 403');
+r = await call7('GET', `/api/demands/${d7.id}/replies/private`, undefined, { 'x-manage-token': 'wrong' });
+assert(r.status === 403, '（回复）错误管理码看私信返回 403');
+r = await call7('GET', `/api/demands/${d7.id}/replies/private`, undefined, { 'x-manage-token': d7c.manage_token });
+assert(r.status === 403, '（回复）别的需求的管理码看私信返回 403');
+r = await call7('GET', `/api/demands/${d7.id}/replies/private`, undefined, { 'x-manage-token': d7.manage_token });
+const privList = await r.json();
+assert(r.status === 200 && privList.length === 1 && privList[0].body === '私下发你', '（回复）正确管理码返回全部私信');
+
+// 37. 不存在 / 被隐藏的需求
+r = await call7('GET', '/api/demands/99999999-9999-4999-8999-999999999999/replies');
+assert(r.status === 404, '（回复）不存在的需求返回 404');
+
+// 38. 示例帖：POST 返回 400，GET 返回空数组
+db7.tables.demands.push({
+  id: '33333333-3333-4333-8333-333333333301', category: 'errand', title: '示例', description: '示例',
+  contact: '示例', status: 'open', manage_token: '33333333-3333-4333-8333-333333333399',
+  created_at: new Date().toISOString(), help_count: 0, hidden: false, is_sample: true,
+});
+r = await call7('POST', '/api/demands/33333333-3333-4333-8333-333333333301/replies', { body: 'hi' }, { 'x-dw-client': 'dev-S' });
+assert(r.status === 400 && (await r.json()).error === 'sample_post', '（回复）示例帖回复返回 400 sample_post');
+r = await call7('GET', '/api/demands/33333333-3333-4333-8333-333333333301/replies');
+assert(r.status === 200 && (await r.json()).length === 0, '（回复）示例帖回复列表为空');
+
+// 39. 限流：同设备每分钟 5 条，第 6 条 429；不同设备不受影响
+let replyStatuses = [];
+for (let i = 0; i < 6; i++) {
+  const rr = await call7('POST', `/api/demands/${d7c.id}/replies`, { body: 'm' + i }, { 'x-dw-client': 'dev-RL' });
+  replyStatuses.push(rr.status);
+}
+assert(replyStatuses.slice(0, 5).every((s) => s === 201), '（回复）前 5 条成功');
+assert(replyStatuses[5] === 429, '（回复）每分钟第 6 条触发 429');
+r = await call7('POST', `/api/demands/${d7c.id}/replies`, { body: 'ok' }, { 'x-dw-client': 'dev-RL2' });
+assert(r.status === 201, '（回复）不同设备不受限流影响');
+
+// 40. 限流：每小时 30 条（伪造时间，跳过分钟档）
+{
+  const realNow = Date.now;
+  const base = realNow();
+  const dbH = createFakeDb();
+  const callH = mkCall(application({ db: dbH, BackendError: FakeError }));
+  const dh = await (await callH('POST', '/api/demands', { category: 'study', title: 'h', description: 'h' })).json();
+  const statuses = [];
+  try {
+    for (let i = 0; i < 31; i++) {
+      Date.now = () => base + i * 61 * 1000; // 每条间隔 61 秒，分钟档始终不触发
+      const rr = await callH('POST', `/api/demands/${dh.id}/replies`, { body: 'h' + i }, { 'x-dw-client': 'dev-HR' });
+      statuses.push(rr.status);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  assert(statuses.slice(0, 30).every((s) => s === 201), '（回复）一小时内前 30 条成功');
+  assert(statuses[30] === 429, '（回复）一小时内第 31 条触发 429');
+}
+
+// 41. 举报回复：同设备只能一次，3 个设备后隐藏
+const target = pubList[0].id;
+r = await call7('POST', `/api/replies/${target}/report`, undefined, { 'x-dw-client': 'rep-A' });
+assert(r.status === 200, '（回复举报）第一次举报 200');
+r = await call7('POST', `/api/replies/${target}/report`, undefined, { 'x-dw-client': 'rep-A' });
+assert(r.status === 409 && (await r.json()).error === 'already_reported', '（回复举报）同设备重复举报 409');
+await call7('POST', `/api/replies/${target}/report`, undefined, { 'x-dw-client': 'rep-B' });
+assert(db7.tables.replies.find((x) => x.id === target).hidden === false, '（回复举报）2 次举报不隐藏');
+r = await call7('POST', `/api/replies/${target}/report`, undefined, { 'x-dw-client': 'rep-C' });
+assert(r.status === 200, '（回复举报）第三个设备举报 200');
+const reported = db7.tables.replies.find((x) => x.id === target);
+assert(reported.report_count === 3 && reported.hidden === true, '（回复举报）report_count=3 时 hidden=true');
+r = await call7('GET', `/api/demands/${d7.id}/replies`);
+pubList = await r.json();
+assert(pubList.length === 2 && !pubList.some((x) => x.id === target), '（回复举报）被隐藏的回复不再出现在公开列表');
+r = await call7('POST', '/api/replies/99999999-9999-4999-8999-999999999999/report', undefined, { 'x-dw-client': 'rep-D' });
+assert(r.status === 404, '（回复举报）不存在的回复 404');
+
+// 42. 管理员删除回复：错误密钥 401，正确密钥删除（私信也可删）
+const privId = privList[0].id;
+r = await call7('DELETE', `/api/admin/replies/${privId}`, undefined, { 'x-admin-key': 'wrong' });
+assert(r.status === 401, '（回复）管理员错误密钥删回复 401');
+r = await call7('DELETE', `/api/admin/replies/${privId}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+assert(r.status === 200 && (await r.json()).ok === true, '（回复）管理员删除私信');
+r = await call7('GET', `/api/demands/${d7.id}/replies/private`, undefined, { 'x-manage-token': d7.manage_token });
+assert((await r.json()).length === 0, '（回复）删除后私信列表为空');
+r = await call7('DELETE', `/api/admin/replies/${privId}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+assert(r.status === 404, '（回复）重复删除返回 404');
 
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

@@ -686,6 +686,35 @@ input, textarea, select { font-family: inherit; }
 .mine-item-help { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
 .mine-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .mine-item-actions .btn { height: 36px; }
+.mine-private { margin: 0 0 12px; }
+.mine-private-toggle { height: 34px; }
+.mine-private-toggle.has-new { border-color: var(--site-accent); font-weight: 700; }
+.mine-private-panel { margin-top: 10px; border: 1px dashed var(--line-btn); border-radius: 12px; padding: 12px; }
+.mine-owner-label { margin-top: 14px; }
+
+/* 回复 */
+.form-label .optional { color: var(--meta); font-weight: 400; }
+.replies { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.replies-title { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--ink); }
+.reply-list { display: flex; flex-direction: column; }
+.reply-list .loading { padding: 12px 0; }
+.reply-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.reply-item:last-child { border-bottom: 0; }
+.reply-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.reply-tag { font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--subtle); border-radius: 6px; padding: 2px 7px; }
+.reply-tag--owner { background: var(--site-accent); color: var(--site-on-accent); }
+.reply-time { font-size: 12px; color: var(--meta); }
+.reply-report { margin-left: auto; font-size: 12px; padding: 2px; }
+.reply-body { margin: 6px 0 0; font-size: 14.5px; line-height: 1.65; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.reply-empty { margin: 4px 0 8px; font-size: 13px; color: var(--meta); }
+.reply-hint { margin: 14px 0 0; font-size: 13px; line-height: 1.55; color: var(--meta); }
+.reply-hint--strong { color: var(--ink-2); font-weight: 600; }
+.reply-form { margin-top: 12px; }
+.reply-input { min-height: 84px; font-size: 14.5px; }
+.reply-form-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.reply-form-row .btn { height: 38px; min-width: 76px; }
+.reply-private { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-2); min-height: 38px; cursor: pointer; }
+.reply-private input { width: 18px; height: 18px; accent-color: var(--site-accent); margin: 0; }
 
 /* Toast */
 .toast {
