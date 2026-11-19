@@ -104,6 +104,7 @@ const I18N = {
     shareAppName: 'XMUM 需求墙',
     shareStatusPrefix: '状态：',
     shareCta: '👉 查看详情和联系方式：',
+    shareCtaNoContact: '👉 查看详情，可以给 TA 发私信：',
     manualCopyTitle: '手动复制',
     manualCopyHint: '自动复制失败，请长按或全选下方文案后复制：',
     manualCopySelect: '全选',
@@ -266,6 +267,7 @@ const I18N = {
     shareAppName: 'XMUM Demand Wall',
     shareStatusPrefix: 'Status: ',
     shareCta: '👉 View details and contact: ',
+    shareCtaNoContact: '👉 View details and send a private message: ',
     manualCopyTitle: 'Copy manually',
     manualCopyHint: 'Automatic copy failed. Long-press or select all the text below, then copy:',
     manualCopySelect: 'Select all',
@@ -465,6 +467,14 @@ async function request(path, options) {
     throw Object.assign(new Error(code), { code, status: res.status });
   }
   return body;
+}
+
+// 「有没有联系方式」：有 contact 原文（如刚发布的自己的帖）就按去首尾空格后是否为空字符串判断；
+// 否则用服务端按同一规则算出的 has_contact。
+function demandHasContact(d) {
+  if (!d) return false;
+  if (typeof d.contact === 'string') return d.contact.trim() !== '';
+  return d.has_contact !== false;
 }
 
 const numCount = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -858,7 +868,7 @@ function buildDetail(d) {
   const time = el('p', 'detail-time', relTime(d.created_at));
 
   // 没留联系方式的真实帖：不显示「我能帮，看联系方式」，改由回复区引导发私信
-  const noContact = !d.is_sample && d.has_contact === false;
+  const noContact = !d.is_sample && !demandHasContact(d);
   const contactBox = el('div', 'contact-box');
   if (noContact) {
     contactBox.hidden = true;
@@ -1071,7 +1081,8 @@ async function revealContact(d, box, btnView) {
         renderFeed();
       }
     }
-    const contact = data && typeof data.contact === 'string' ? data.contact : '';
+    const contact = data && typeof data.contact === 'string' ? data.contact.trim() : '';
+    if (!contact) throw Object.assign(new Error('no_contact'), { code: 'no_contact' });
     box.innerHTML = '';
     box.appendChild(el('div', 'form-label', COPY.contactLabel));
     box.appendChild(el('div', 'contact-value', contact));
@@ -1381,7 +1392,7 @@ function buildShareText(d) {
     d.title || '',
     truncDesc(d.description),
     `${COPY.shareStatusPrefix}${st}`,
-    `${COPY.shareCta}${deepLink(d.id)}`,
+    `${d.is_sample || demandHasContact(d) ? COPY.shareCta : COPY.shareCtaNoContact}${deepLink(d.id)}`,
   ].join('\n');
 }
 

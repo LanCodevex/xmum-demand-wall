@@ -360,9 +360,15 @@ const call7 = mkCall(application({ db: db7, BackendError: FakeError, env: makeEn
 r = await call7('POST', '/api/demands', { category: 'study', title: '求高数笔记', description: '第三章' });
 assert(r.status === 201, '（回复）不填联系方式可发布');
 const d7 = await r.json();
-assert(d7.contact === null && d7.has_contact === false, '（回复）无联系方式存为 null，has_contact=false');
+assert(d7.contact === '' && d7.has_contact === false, '（回复）不填联系方式返回空字符串 contact，has_contact=false');
+assert(db7.tables.demands.find((x) => x.id === d7.id).contact === '', '（回复）不填联系方式在库里存为空字符串（非 NULL）');
 r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: '   ' });
-assert(r.status === 201 && (await r.json()).has_contact === false, '（回复）空白联系方式视为未填');
+const dBlank = await r.json();
+assert(r.status === 201 && dBlank.has_contact === false, '（回复）空白联系方式视为未填');
+assert(db7.tables.demands.find((x) => x.id === dBlank.id).contact === '', '（回复）空白联系方式存为空字符串');
+r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: null });
+const dNull = await r.json();
+assert(r.status === 201 && db7.tables.demands.find((x) => x.id === dNull.id).contact === '', '（回复）contact=null 也存为空字符串');
 r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 'x'.repeat(51) });
 assert(r.status === 400, '（回复）联系方式超 50 字被拒绝');
 r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 123 });
@@ -377,6 +383,9 @@ const l7 = await r.json();
 assert(l7.find((x) => x.id === d7c.id).has_contact === true && l7.every((x) => !('contact' in x)), '（回复）列表 has_contact 正确且不含 contact');
 r = await call7('POST', `/api/demands/${d7.id}/help`, undefined, { 'x-dw-client': 'dev-R0' });
 assert(r.status === 400 && (await r.json()).error === 'no_contact', '（回复）无联系方式的需求 help 返回 no_contact');
+assert(db7.tables.demands.find((x) => x.id === d7.id).help_count === 0, '（回复）无联系方式 help 不增加计数');
+r = await call7('GET', `/api/demands/${d7.id}/contact`, undefined, { 'x-dw-client': 'dev-R0' });
+assert(r.status === 400 && (await r.json()).error === 'no_contact', '（回复）无联系方式的需求 contact 返回 no_contact');
 
 // 32. 发表公开回复 / 私信；去首尾空格
 r = await call7('POST', `/api/demands/${d7.id}/replies`, { body: '  我有笔记  ', is_private: false }, { 'x-dw-client': 'dev-R1' });
@@ -500,5 +509,61 @@ r = await call7('GET', `/api/demands/${d7.id}/replies/private`, undefined, { 'x-
 assert((await r.json()).length === 0, '（回复）删除后私信列表为空');
 r = await call7('DELETE', `/api/admin/replies/${privId}`, undefined, { 'x-admin-key': 'sk-admin-123' });
 assert(r.status === 404, '（回复）重复删除返回 404');
+
+// ---- 新增：无外键级联，由服务端清理关联数据 ----
+{
+  const dbC = createFakeDb();
+  const callC = mkCall(application({ db: dbC, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
+  const mk = async (title) => (await (await callC('POST', '/api/demands', { category: 'study', title, description: 'd' })).json());
+  // 给需求加 1 条公开、1 条私信，并让公开回复被举报 1 次
+  const seed = async (d, tag) => {
+    const pub = await (await callC('POST', `/api/demands/${d.id}/replies`, { body: 'pub' }, { 'x-dw-client': 'c-' + tag })).json();
+    await callC('POST', `/api/demands/${d.id}/replies`, { body: 'priv', is_private: true }, { 'x-dw-client': 'c-' + tag });
+    await callC('POST', `/api/replies/${pub.id}/report`, undefined, { 'x-dw-client': 'rep-' + tag });
+    return pub;
+  };
+  const repliesOf = (id) => dbC.tables.replies.filter((x) => x.demand_id === id);
+  const reportsOf = (ids) => dbC.tables.reply_reports.filter((x) => ids.includes(x.reply_id));
+
+  const keep = await mk('保留');
+  const keepPub = await seed(keep, 'K');
+
+  // 43. 发帖人撤下：错误管理码不动回复；正确管理码删需求 + 回复 + 回复举报
+  const dA = await mk('A');
+  const pubA = await seed(dA, 'A');
+  assert(repliesOf(dA.id).length === 2 && reportsOf([pubA.id]).length === 1, '（级联）准备数据：2 条回复、1 条回复举报');
+  await callC('DELETE', `/api/demands/${dA.id}`, undefined, { 'x-manage-token': 'wrong' });
+  assert(repliesOf(dA.id).length === 2, '（级联）错误管理码撤下不删除回复');
+  r = await callC('DELETE', `/api/demands/${dA.id}`, undefined, { 'x-manage-token': dA.manage_token });
+  assert(r.status === 200, '（级联）发帖人撤下返回 200');
+  assert(repliesOf(dA.id).length === 0, '（级联）撤下需求同时删除其全部回复（含私信）');
+  assert(reportsOf([pubA.id]).length === 0, '（级联）撤下需求同时删除其回复的举报记录');
+
+  // 44. 管理员删除需求：同样级联
+  const dB = await mk('B');
+  const pubB = await seed(dB, 'B');
+  r = await callC('DELETE', `/api/admin/demands/${dB.id}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+  assert(r.status === 200 && repliesOf(dB.id).length === 0 && reportsOf([pubB.id]).length === 0, '（级联）管理员删除需求同时删除回复与回复举报');
+
+  // 45. 管理员删除回复：同时删除该回复的举报记录，不影响其他回复
+  const dC = await mk('C');
+  const pubC = await seed(dC, 'C');
+  r = await callC('DELETE', `/api/admin/replies/${pubC.id}`, undefined, { 'x-admin-key': 'sk-admin-123' });
+  assert(r.status === 200 && reportsOf([pubC.id]).length === 0, '（级联）管理员删除回复同时删除其举报记录');
+  assert(repliesOf(dC.id).length === 1, '（级联）删除回复不影响同需求的其他回复');
+
+  // 46. 管理员批量删示例帖：示例帖的回复与举报一并删除（直接注入示例帖的回复数据）
+  const sampleId = '55555555-5555-4555-8555-555555555501';
+  dbC.tables.demands.push({ id: sampleId, category: 'errand', title: 's', description: 's', contact: 's', status: 'open',
+    manage_token: 'tok-sample', created_at: new Date().toISOString(), help_count: 0, hidden: false, is_sample: true });
+  const sReply = '55555555-5555-4555-8555-555555555502';
+  dbC.tables.replies.push({ id: sReply, demand_id: sampleId, body: 'x', is_private: false, is_owner: false, report_count: 1, hidden: false, created_at: new Date().toISOString() });
+  dbC.tables.reply_reports.push({ id: '55555555-5555-4555-8555-555555555503', reply_id: sReply, device: 'x', created_at: new Date().toISOString() });
+  r = await callC('DELETE', '/api/admin/samples', undefined, { 'x-admin-key': 'sk-admin-123' });
+  assert(r.status === 200 && repliesOf(sampleId).length === 0 && reportsOf([sReply]).length === 0, '（级联）删除示例帖同时删除其回复与回复举报');
+
+  // 其他需求的数据不受影响
+  assert(repliesOf(keep.id).length === 2 && reportsOf([keepPub.id]).length === 1, '（级联）其他需求的回复与举报保持不变');
+}
 
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

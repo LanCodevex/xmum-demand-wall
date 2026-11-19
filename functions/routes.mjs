@@ -125,10 +125,12 @@ export function application({ db, BackendError, env = null }) {
 
   // help_count / hidden 由 migration 以「可空、无默认」方式新增，旧行可能为 NULL，这里统一归一并剥离内部字段
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  // 「有没有联系方式」的唯一判断：去掉首尾空格后不是空字符串（兼容旧数据可能出现的 NULL）
+  const hasContact = (v) => typeof v === 'string' && v.trim() !== '';
   const publicRow = (d) => {
     const { hidden, contact, ...rest } = d;
     // 只透出「有没有联系方式」，不透出联系方式本身
-    rest.has_contact = typeof contact === 'string' && contact.trim() !== '';
+    rest.has_contact = hasContact(contact);
     rest.help_count = num(rest.help_count);
     rest.is_sample = rest.is_sample === true;
     return rest;
@@ -156,6 +158,20 @@ export function application({ db, BackendError, env = null }) {
     if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
     return found[0];
   }
+  // 数据库没有外键级联，由服务端清理关联数据：
+  // 删除回复 → 删其 reply_reports；删除需求 → 删其 replies 及这些回复的 reply_reports。
+  async function purgeReplyReports(replyIds) {
+    if (!replyIds.length) return;
+    rows(await db.from('reply_reports').delete().in('reply_id', replyIds).select('id'));
+  }
+  async function purgeDemandChildren(demandIds) {
+    if (!demandIds.length) return;
+    const replies = rows(await db.from('replies').select('id').in('demand_id', demandIds));
+    const replyIds = (Array.isArray(replies) ? replies : []).map((r) => r.id);
+    await purgeReplyReports(replyIds);
+    rows(await db.from('replies').delete().in('demand_id', demandIds).select('id'));
+  }
+
   const tokenMatches = (demand, token) => typeof token === 'string' && token !== ''
     && typeof demand.manage_token === 'string' && demand.manage_token === token;
 
@@ -187,14 +203,14 @@ export function application({ db, BackendError, env = null }) {
       const title = clean(body && body.title, LIMITS.title);
       const description = clean(body && body.description, LIMITS.description);
       if (!title || !description) fail('invalid_input', 400);
-      // 联系方式选填：缺省/空白 → null；有内容则必须是字符串且 ≤50 字
+      // 联系方式选填：缺省/空白 → 存空字符串 ''（contact 列保持 NOT NULL）；有内容则必须是字符串且 ≤50 字
       const rawContact = body && body.contact;
-      let contact = null;
+      let contact = '';
       if (rawContact !== undefined && rawContact !== null) {
         if (typeof rawContact !== 'string') fail('invalid_input', 400);
         const t = rawContact.trim();
         if (t.length > LIMITS.contact) fail('invalid_input', 400);
-        contact = t || null;
+        contact = t;
       }
 
       // 通过输入校验后再计一次发布配额（非法请求不占用额度）
@@ -209,7 +225,7 @@ export function application({ db, BackendError, env = null }) {
       }).select('id,category,title,description,contact,status,manage_token,created_at,help_count,is_sample'));
       if (!created || !created.length) fail('write_failed', 500);
       const out = { ...created[0] };
-      out.has_contact = typeof out.contact === 'string' && out.contact.trim() !== '';
+      out.has_contact = hasContact(out.contact);
       return Response.json(out, { status: 201 });
     }
 
@@ -233,6 +249,7 @@ export function application({ db, BackendError, env = null }) {
       const found = rows(await db.from('demands').select('id,contact,hidden,is_sample').eq('id', contactMatch[1]).limit(1));
       if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
       if (found[0].is_sample === true) fail('sample_post', 400);
+      if (!hasContact(found[0].contact)) fail('no_contact', 400);
       return Response.json({ id: found[0].id, contact: found[0].contact });
     }
 
@@ -256,6 +273,7 @@ export function application({ db, BackendError, env = null }) {
       const deleted = rows(await db.from('demands').delete()
         .eq('id', deleteMatch[1]).eq('manage_token', token).select('id'));
       if (!deleted || !deleted.length) fail('manage_token_invalid', 403);
+      await purgeDemandChildren([deleted[0].id]);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -271,7 +289,7 @@ export function application({ db, BackendError, env = null }) {
       const found = rows(await db.from('demands').select('id,contact,hidden,help_count,is_sample').eq('id', helpMatch[1]).limit(1));
       if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
       if (found[0].is_sample === true) fail('sample_post', 400);
-      if (typeof found[0].contact !== 'string' || !found[0].contact.trim()) fail('no_contact', 400);
+      if (!hasContact(found[0].contact)) fail('no_contact', 400);
       const next = num(found[0].help_count) + 1;
       const updated = rows(await db.from('demands').update({ help_count: next }).eq('id', helpMatch[1]).select('id,help_count'));
       if (!updated || !updated.length) fail('write_failed', 500);
@@ -411,6 +429,7 @@ export function application({ db, BackendError, env = null }) {
       requireAdmin(request);
       const deleted = rows(await db.from('demands').delete().eq('id', adminDelMatch[1]).select('id'));
       if (!deleted || !deleted.length) fail('not_found', 404);
+      await purgeDemandChildren([deleted[0].id]);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -420,6 +439,7 @@ export function application({ db, BackendError, env = null }) {
       requireAdmin(request);
       const deleted = rows(await db.from('replies').delete().eq('id', adminReplyDelMatch[1]).select('id'));
       if (!deleted || !deleted.length) fail('not_found', 404);
+      await purgeReplyReports([deleted[0].id]);
       return Response.json({ ok: true, id: deleted[0].id });
     }
 
@@ -436,6 +456,7 @@ export function application({ db, BackendError, env = null }) {
     if (path === '/api/admin/samples' && request.method === 'DELETE') {
       requireAdmin(request);
       const deleted = rows(await db.from('demands').delete().eq('is_sample', true).select('id'));
+      await purgeDemandChildren((Array.isArray(deleted) ? deleted : []).map((d) => d.id));
       return Response.json({ ok: true, deleted: Array.isArray(deleted) ? deleted.length : 0 });
     }
 
