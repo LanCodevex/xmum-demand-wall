@@ -16,6 +16,8 @@ export function application({ db, BackendError, env = null }) {
   const FEED_COLUMNS = LIST_COLUMNS + ',contact';
   // 回复对外字段：不含 is_private / report_count / hidden
   const REPLY_COLUMNS = 'id,body,is_owner,created_at';
+  // 管理页：全部需求列表上限、回复扫描上限
+  const ADMIN_DEMAND_LIST = 1000, ADMIN_REPLY_SCAN = 10000;
   const LIMITS = { title: 40, description: 500, contact: 50, list: 300, reply: 200, replyList: 200 };
 
   const fail = (code, status) => { throw new BackendError(code, status); };
@@ -551,6 +553,48 @@ export function application({ db, BackendError, env = null }) {
       }
       const list = [...groups.values()].sort((a, b) => (b.latest_at < a.latest_at ? -1 : b.latest_at > a.latest_at ? 1 : 0));
       return Response.json(list);
+    }
+
+    // 管理员：全部需求（含已隐藏），按发布时间倒序，附公开回复数 / 私信数。
+    // 仅管理页使用；不含 contact / manage_token / pin_*。
+    if (path === '/api/admin/demands' && request.method === 'GET') {
+      requireAdmin(request);
+      const raw = rows(await db.from('demands').select(LIST_COLUMNS)
+        .order('created_at', { ascending: false }).limit(ADMIN_DEMAND_LIST));
+      const list = Array.isArray(raw) ? raw : [];
+      // 一次取回复的 demand_id/is_private 在内存里计数，避免逐条查询
+      const reps = rows(await db.from('replies').select('demand_id,is_private').limit(ADMIN_REPLY_SCAN));
+      const counts = new Map();
+      for (const r of Array.isArray(reps) ? reps : []) {
+        if (!r || !r.demand_id) continue;
+        const c = counts.get(r.demand_id) || { pub: 0, priv: 0 };
+        if (r.is_private === true) c.priv += 1; else c.pub += 1;
+        counts.set(r.demand_id, c);
+      }
+      return Response.json(list.map((d) => {
+        const c = counts.get(d.id) || { pub: 0, priv: 0 };
+        return {
+          id: d.id, category: d.category, title: d.title, description: d.description,
+          status: d.status, created_at: d.created_at, help_count: num(d.help_count),
+          is_sample: d.is_sample === true, hidden: d.hidden === true,
+          public_count: c.pub, private_count: c.priv,
+        };
+      }));
+    }
+
+    // 管理员：某条需求的全部回复（公开 + 私信，含已隐藏），按时间正序。仅管理页使用。
+    const adminRepliesMatch = path.match(/^\/api\/admin\/demands\/([0-9a-f-]{36})\/replies$/);
+    if (adminRepliesMatch && isUuid(adminRepliesMatch[1]) && request.method === 'GET') {
+      requireAdmin(request);
+      const id = adminRepliesMatch[1];
+      const found = rows(await db.from('demands').select('id').eq('id', id).limit(1));
+      if (!found || !found.length) fail('not_found', 404);
+      const list = rows(await db.from('replies').select('id,body,is_private,is_owner,report_count,hidden,created_at')
+        .eq('demand_id', id).order('created_at', { ascending: true }).limit(ADMIN_REPLY_SCAN));
+      return Response.json((Array.isArray(list) ? list : []).map((x) => ({
+        id: x.id, body: x.body, is_private: x.is_private === true, is_owner: x.is_owner === true,
+        report_count: num(x.report_count), hidden: x.hidden === true, created_at: x.created_at,
+      })));
     }
 
     // 管理员：删除任意需求

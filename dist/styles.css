@@ -789,6 +789,17 @@ body.admin #glassbar { display: none; }
 .admin-card-reasons strong { color: var(--ink); font-weight: 700; }
 .admin-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .admin-card-actions .btn { height: 36px; }
+.admin-tabs:empty { display: none; }
+.admin-tools:empty { display: none; }
+.admin-tools { display: flex; flex-direction: column; gap: 6px; }
+.admin-count { margin: 0; font-size: 12px; color: var(--meta); }
+.admin-card-desc { margin: 0 0 8px; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.admin-card-desc.is-empty { color: var(--meta); }
+.admin-replies { margin-top: 10px; border-top: 1px solid var(--line); }
+.admin-replies[hidden] { display: none; }
+.admin-replies .reply-empty { margin: 10px 0 0; }
+.reply-tag--private { background: #F3E3D9; color: #8A3A12; }
+.admin-reply-del { margin-left: auto; height: 28px; padding: 0 10px; font-size: 12px; }
 
 /* ===== 桌面端左栏 / 右栏：手机端（<768px）不显示 ===== */
 .side, .pane { display: none; }

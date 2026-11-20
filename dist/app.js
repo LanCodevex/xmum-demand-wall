@@ -156,6 +156,27 @@ const I18N = {
     adminRestored: '已恢复显示',
     adminDemandMissing: '该需求已不存在',
     adminLoadError: '加载举报列表失败',
+    adminTabReports: '举报列表',
+    adminTabAll: '全部需求',
+    adminSearchPlaceholder: '按标题或描述搜索',
+    adminAllEmpty: '还没有需求',
+    adminNoMatch: '没有匹配的需求',
+    adminAllCount: (n, total) => (n === total ? `共 ${total} 条` : `匹配 ${n} / ${total} 条`),
+    adminAllLoadError: '加载需求列表失败',
+    adminReplyCounts: (pub, priv) => `回复 ${pub} · 私信 ${priv}`,
+    adminShowReplies: '查看回复',
+    adminHideReplies: '收起回复',
+    adminRepliesEmpty: '暂无回复或私信',
+    adminRepliesLoadError: '加载回复失败',
+    adminReplyPublic: '公开',
+    adminReplyPrivate: '私信',
+    adminReplyReported: (n) => `被举报 ${n} 次`,
+    adminSample: '示例',
+    adminNoDescription: '（无描述）',
+    adminDeleteDemandConfirm: (t) => `将永久删除需求「${t}」及其全部回复和私信，无法恢复。确定删除？`,
+    adminDeleteReplyConfirm: '将永久删除这条回复，无法恢复。确定删除？',
+    adminDeleteReplyTitle: '删除回复',
+    adminReplyDeleted: '回复已删除',
     repliesTitle: '回复',
     repliesCount: (n) => `回复 ${n}`,
     repliesEmpty: '还没有回复，来说第一句吧',
@@ -341,6 +362,27 @@ const I18N = {
     adminRestored: 'Restored',
     adminDemandMissing: 'This demand no longer exists',
     adminLoadError: 'Failed to load reports',
+    adminTabReports: 'Reports',
+    adminTabAll: 'All demands',
+    adminSearchPlaceholder: 'Search title or description',
+    adminAllEmpty: 'No demands yet',
+    adminNoMatch: 'No matching demands',
+    adminAllCount: (n, total) => (n === total ? `${total} total` : `${n} of ${total} match`),
+    adminAllLoadError: 'Failed to load demands',
+    adminReplyCounts: (pub, priv) => `${pub} replies · ${priv} private`,
+    adminShowReplies: 'Show replies',
+    adminHideReplies: 'Hide replies',
+    adminRepliesEmpty: 'No replies or private messages',
+    adminRepliesLoadError: 'Failed to load replies',
+    adminReplyPublic: 'Public',
+    adminReplyPrivate: 'Private',
+    adminReplyReported: (n) => `reported ${n} times`,
+    adminSample: 'Sample',
+    adminNoDescription: '(no description)',
+    adminDeleteDemandConfirm: (t) => `This permanently deletes "${t}" with all its replies and private messages. It cannot be undone. Delete it?`,
+    adminDeleteReplyConfirm: 'This permanently deletes the reply. It cannot be undone. Delete it?',
+    adminDeleteReplyTitle: 'Delete reply',
+    adminReplyDeleted: 'Reply deleted',
     repliesTitle: 'Replies',
     repliesCount: (n) => `Replies ${n}`,
     repliesEmpty: 'No replies yet. Be the first to say something.',
@@ -419,6 +461,9 @@ const state = {
   lastShareDemand: null, // 成功弹窗的分享文案在切换语言时重建
   loaded: false, // 首次加载完成前，hero 数字显示灰色占位块
   adminKey: null, // 管理页输入的 ADMIN_KEY（仅存内存）
+  adminView: 'reports', // 管理页当前列表：reports | all
+  adminDemands: [], // 管理页「全部需求」缓存（仅内存）
+  adminQuery: '', // 管理页搜索词
   reportDemand: null, // 当前举报目标需求
 };
 
@@ -2279,12 +2324,13 @@ function buildAdminAuth() {
     const key = i.value.trim();
     if (!key) { toast(COPY.adminKeyPlaceholder); return; }
     state.adminKey = key;
-    loadAdminReports();
+    loadAdmin();
   });
   i.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
   auth.append(l, i, btn);
   $('#admin-list').innerHTML = '';
   $('#admin-tools').innerHTML = '';
+  $('#admin-tabs').innerHTML = '';
 }
 
 function enterAdmin() {
@@ -2293,15 +2339,54 @@ function enterAdmin() {
   document.body.style.overflow = '';
   renderAdminStatic();
   buildAdminAuth();
-  if (state.adminKey) loadAdminReports(); // 已登录则直接加载
+  if (state.adminKey) loadAdmin(); // 已登录则直接加载
 }
 
 function exitAdmin() {
   document.body.classList.remove('admin');
   $('#admin').hidden = true;
   state.adminKey = null;
+  state.adminDemands = [];
+  state.adminQuery = '';
   try { history.replaceState(null, '', baseHashUrl()); } catch { /* 忽略 */ }
   if (!state.loaded) loadDemands(); else renderFeed();
+}
+
+const adminHeaders = () => ({ 'x-admin-key': state.adminKey });
+const adminErrText = (err, fallback) => (err.code === 'unauthorized' ? COPY.adminWrong
+  : err.code === 'admin_not_configured' ? COPY.adminNotConfigured : fallback);
+
+// 登录后按当前视图加载：举报列表 / 全部需求
+function loadAdmin() {
+  renderAdminTabs();
+  if (state.adminView === 'all') loadAdminDemands(); else loadAdminReports();
+}
+
+function renderAdminTabs() {
+  const box = $('#admin-tabs');
+  box.innerHTML = '';
+  box.setAttribute('role', 'tablist');
+  [['reports', COPY.adminTabReports], ['all', COPY.adminTabAll]].forEach(([key, label]) => {
+    const t = el('button', 'tab' + (state.adminView === key ? ' active' : ''), label);
+    t.type = 'button';
+    t.setAttribute('role', 'tab');
+    t.setAttribute('aria-selected', state.adminView === key ? 'true' : 'false');
+    t.addEventListener('click', () => {
+      if (state.adminView === key) return;
+      state.adminView = key;
+      loadAdmin();
+    });
+    box.appendChild(t);
+  });
+}
+
+function adminStateBox(svg, text) {
+  const box = el('div', 'feed-state');
+  const art = el('div', 'state-art');
+  art.innerHTML = svg;
+  box.appendChild(art);
+  box.appendChild(el('p', null, text));
+  return box;
 }
 
 async function loadAdminReports() {
@@ -2311,6 +2396,7 @@ async function loadAdminReports() {
   list.appendChild(loadingNode());
   try {
     const data = await request('/api/admin/reports', { headers: { 'x-admin-key': state.adminKey } });
+    if (state.adminView !== 'reports') return;
     renderAdminReports(Array.isArray(data) ? data : []);
   } catch (err) {
     list.innerHTML = '';
@@ -2406,7 +2492,7 @@ function adminCard(g) {
     }
     const bDel = el('button', 'btn btn-danger btn-sm', COPY.adminDelete);
     bDel.type = 'button';
-    bDel.addEventListener('click', () => adminRemove(d.id, bDel));
+    bDel.addEventListener('click', () => adminRemove(d.id, bDel, d.title));
     actions.appendChild(bDel);
     card.appendChild(actions);
   }
@@ -2414,7 +2500,14 @@ function adminCard(g) {
   return card;
 }
 
-async function adminRemove(id, btn) {
+async function adminRemove(id, btn, title) {
+  const ok = await askConfirm({
+    title: COPY.adminDelete,
+    body: COPY.adminDeleteDemandConfirm(title || ''),
+    ok: COPY.adminDelete,
+    cancel: COPY.confirmNo,
+  });
+  if (!ok) return;
   btn.disabled = true;
   try {
     await request(`/api/admin/demands/${id}`, { method: 'DELETE', headers: { 'x-admin-key': state.adminKey } });
@@ -2436,6 +2529,182 @@ async function adminRestore(id, btn) {
     btn.disabled = false;
     toast(err.code === 'unauthorized' ? COPY.adminWrong : COPY.errGeneric);
   }
+}
+
+/* ---------- 管理页：全部需求 ---------- */
+async function loadAdminDemands() {
+  const tools = $('#admin-tools');
+  const list = $('#admin-list');
+  tools.innerHTML = '';
+  list.innerHTML = '';
+  list.appendChild(loadingNode());
+  try {
+    const data = await request('/api/admin/demands', { headers: adminHeaders() });
+    if (state.adminView !== 'all') return;
+    state.adminDemands = Array.isArray(data) ? data : [];
+    renderAdminSearch();
+    renderAdminDemands();
+  } catch (err) {
+    if (state.adminView !== 'all') return;
+    list.innerHTML = '';
+    list.appendChild(adminStateBox(SVG_ERR, adminErrText(err, COPY.adminAllLoadError)));
+  }
+}
+
+function renderAdminSearch() {
+  const tools = $('#admin-tools');
+  tools.innerHTML = '';
+  const i = el('input', 'input admin-search');
+  i.type = 'search';
+  i.autocomplete = 'off';
+  i.placeholder = COPY.adminSearchPlaceholder;
+  i.setAttribute('aria-label', COPY.adminSearchPlaceholder);
+  i.value = state.adminQuery;
+  i.addEventListener('input', () => {
+    state.adminQuery = i.value;
+    renderAdminDemands();
+  });
+  tools.append(i, el('p', 'admin-count', ''));
+}
+
+function adminFiltered() {
+  const q = state.adminQuery.trim().toLowerCase();
+  if (!q) return state.adminDemands;
+  return state.adminDemands.filter((d) => `${d.title || ''}\n${d.description || ''}`.toLowerCase().includes(q));
+}
+
+function renderAdminDemands() {
+  const list = $('#admin-list');
+  list.innerHTML = '';
+  const all = state.adminDemands;
+  const shown = adminFiltered();
+  const count = $('#admin-tools .admin-count');
+  if (count) count.textContent = all.length ? COPY.adminAllCount(shown.length, all.length) : '';
+  if (!all.length) { list.appendChild(adminStateBox(SVG_INBOX, COPY.adminAllEmpty)); return; }
+  if (!shown.length) { list.appendChild(adminStateBox(SVG_INBOX, COPY.adminNoMatch)); return; }
+  shown.forEach((d) => list.appendChild(adminDemandCard(d)));
+}
+
+function adminDemandCard(d) {
+  const card = el('div', 'admin-card');
+  const top = el('div', 'admin-card-top');
+  top.appendChild(categoryStamp(d.category));
+  const info = el('div', 'admin-card-info');
+  info.appendChild(el('p', 'admin-card-title', d.title));
+  const sub = el('p', 'admin-card-meta');
+  sub.appendChild(el('span', null, COPY.categories[d.category] || d.category));
+  sub.appendChild(el('span', null, COPY.status[d.status] || d.status || ''));
+  const time = el('time', null, relTime(d.created_at));
+  time.dateTime = d.created_at || '';
+  time.title = d.created_at ? new Date(d.created_at).toLocaleString() : '';
+  sub.appendChild(time);
+  if (d.is_sample === true) sub.appendChild(el('span', null, COPY.adminSample));
+  if (d.hidden === true) sub.appendChild(el('span', 'tag-overdue', COPY.adminHidden));
+  info.appendChild(sub);
+  top.appendChild(info);
+  card.appendChild(top);
+
+  card.appendChild(el('p', 'admin-card-desc' + (d.description ? '' : ' is-empty'), d.description || COPY.adminNoDescription));
+  const counts = el('p', 'admin-card-reasons', COPY.adminReplyCounts(numCount(d.public_count), numCount(d.private_count)));
+  card.appendChild(counts);
+
+  const replies = el('div', 'admin-replies');
+  replies.hidden = true;
+
+  const actions = el('div', 'admin-card-actions');
+  const bToggle = el('button', 'btn btn-ghost btn-sm', COPY.adminShowReplies);
+  bToggle.type = 'button';
+  bToggle.setAttribute('aria-expanded', 'false');
+  bToggle.addEventListener('click', () => {
+    const open = replies.hidden;
+    replies.hidden = !open;
+    bToggle.textContent = open ? COPY.adminHideReplies : COPY.adminShowReplies;
+    bToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) loadAdminReplies(d, replies, counts);
+  });
+  const bDel = el('button', 'btn btn-danger btn-sm', COPY.adminDelete);
+  bDel.type = 'button';
+  bDel.addEventListener('click', () => adminDeleteDemand(d, bDel));
+  actions.append(bToggle, bDel);
+  card.append(actions, replies);
+  return card;
+}
+
+async function adminDeleteDemand(d, btn) {
+  const ok = await askConfirm({
+    title: COPY.adminDelete,
+    body: COPY.adminDeleteDemandConfirm(d.title),
+    ok: COPY.adminDelete,
+    cancel: COPY.confirmNo,
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    // 已有的管理员删除接口：删除需求，并在服务端清理其回复与回复举报
+    await request(`/api/admin/demands/${d.id}`, { method: 'DELETE', headers: adminHeaders() });
+    toast(COPY.adminDeleted);
+  } catch (err) {
+    if (err.code !== 'not_found') { btn.disabled = false; toast(adminErrText(err, COPY.errGeneric)); return; }
+    toast(COPY.adminDemandMissing);
+  }
+  state.adminDemands = state.adminDemands.filter((x) => x.id !== d.id);
+  renderAdminDemands();
+  loadDemands();
+}
+
+async function loadAdminReplies(d, box, counts) {
+  box.innerHTML = '';
+  box.appendChild(loadingNode());
+  try {
+    const data = await request(`/api/admin/demands/${d.id}/replies`, { headers: adminHeaders() });
+    const list = Array.isArray(data) ? data : [];
+    // 用实际取到的回复刷新计数
+    d.public_count = list.filter((r) => !r.is_private).length;
+    d.private_count = list.filter((r) => r.is_private).length;
+    counts.textContent = COPY.adminReplyCounts(d.public_count, d.private_count);
+    box.innerHTML = '';
+    if (!list.length) { box.appendChild(el('p', 'reply-empty', COPY.adminRepliesEmpty)); return; }
+    list.forEach((r) => box.appendChild(adminReplyItem(r, d, box, counts)));
+  } catch (err) {
+    box.innerHTML = '';
+    box.appendChild(el('p', 'reply-empty', adminErrText(err, COPY.adminRepliesLoadError)));
+  }
+}
+
+function adminReplyItem(r, d, box, counts) {
+  const item = el('div', 'reply-item');
+  const top = el('div', 'reply-top');
+  top.appendChild(el('span', r.is_private ? 'reply-tag reply-tag--private' : 'reply-tag', r.is_private ? COPY.adminReplyPrivate : COPY.adminReplyPublic));
+  if (r.is_owner) top.appendChild(el('span', 'reply-tag reply-tag--owner', COPY.replyOwner));
+  top.appendChild(el('span', 'reply-time', relTime(r.created_at)));
+  if (r.hidden) top.appendChild(el('span', 'tag-overdue', COPY.adminHidden));
+  if (numCount(r.report_count) > 0) top.appendChild(el('span', 'reply-time', COPY.adminReplyReported(numCount(r.report_count))));
+  const bDel = el('button', 'btn btn-danger btn-sm admin-reply-del', COPY.adminDelete);
+  bDel.type = 'button';
+  bDel.addEventListener('click', async () => {
+    const ok = await askConfirm({
+      title: COPY.adminDeleteReplyTitle,
+      body: COPY.adminDeleteReplyConfirm,
+      ok: COPY.adminDelete,
+      cancel: COPY.confirmNo,
+    });
+    if (!ok) return;
+    bDel.disabled = true;
+    try {
+      await request(`/api/admin/replies/${r.id}`, { method: 'DELETE', headers: adminHeaders() });
+      toast(COPY.adminReplyDeleted);
+    } catch (err) {
+      if (err.code !== 'not_found') { bDel.disabled = false; toast(adminErrText(err, COPY.errGeneric)); return; }
+    }
+    item.remove();
+    if (r.is_private) d.private_count = Math.max(0, numCount(d.private_count) - 1);
+    else d.public_count = Math.max(0, numCount(d.public_count) - 1);
+    counts.textContent = COPY.adminReplyCounts(d.public_count, d.private_count);
+    if (!box.querySelector('.reply-item')) box.appendChild(el('p', 'reply-empty', COPY.adminRepliesEmpty));
+  });
+  top.appendChild(bDel);
+  item.append(top, el('p', 'reply-body', r.body));
+  return item;
 }
 
 /* ================= 语言切换与静态渲染 ================= */

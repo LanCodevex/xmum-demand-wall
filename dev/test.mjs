@@ -892,4 +892,56 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   assert(JSON.stringify(dbC.tables) === before, '（回复数）只读，不写数据库');
 }
 
+// ---- 管理页：全部需求列表与回复查看 ----
+{
+  const dbA = createFakeDb();
+  const callA = mkCall(application({ db: dbA, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
+  const K = { 'x-admin-key': 'sk-admin-123' };
+  const pub = async (title, dev) => (await callA('POST', '/api/demands',
+    { pin: '1234', category: 'study', title, description: 'desc ' + title, contact: 'wx: secret' }, { 'x-dw-client': dev })).json();
+  const a = await pub('第一条', 'adm-1');
+  await new Promise((res) => setTimeout(res, 5));
+  const b = await pub('第二条', 'adm-2');
+  dbA.tables.demands.find((x) => x.id === a.id).hidden = true;
+  await callA('POST', `/api/demands/${b.id}/replies`, { body: '公开回复' }, { 'x-dw-client': 'adm-r1' });
+  await callA('POST', `/api/demands/${b.id}/replies`, { body: '私信内容', is_private: true }, { 'x-dw-client': 'adm-r2' });
+  dbA.tables.replies[0].hidden = true;
+
+  // 80. 鉴权：无密钥 / 错误密钥 401；未配置 ADMIN_KEY 503
+  r = await callA('GET', '/api/admin/demands');
+  assert(r.status === 401, '（管理列表）无密钥 401');
+  r = await callA('GET', '/api/admin/demands', undefined, { 'x-admin-key': 'wrong' });
+  assert(r.status === 401, '（管理列表）错误密钥 401');
+  r = await callA('GET', `/api/admin/demands/${b.id}/replies`, undefined, { 'x-admin-key': 'wrong' });
+  assert(r.status === 401, '（管理回复）错误密钥 401');
+  const callN = mkCall(application({ db: dbA, BackendError: FakeError, env: makeEnv({}) }));
+  r = await callN('GET', '/api/admin/demands', undefined, { 'x-admin-key': 'x' });
+  assert(r.status === 503, '（管理列表）未配置 ADMIN_KEY 返回 503');
+  r = await callN('GET', `/api/admin/demands/${b.id}/replies`, undefined, { 'x-admin-key': 'x' });
+  assert(r.status === 503, '（管理回复）未配置 ADMIN_KEY 返回 503');
+
+  // 81. 列表：倒序、含已隐藏、带回复数，不含联系方式/凭据/口令
+  r = await callA('GET', '/api/admin/demands', undefined, K);
+  const list = await r.json();
+  assert(r.status === 200 && list.length === 2 && list[0].id === b.id && list[1].id === a.id, '（管理列表）按发布时间倒序，含已隐藏需求');
+  assert(list[1].hidden === true && list[0].hidden === false, '（管理列表）标出隐藏状态');
+  assert(list[0].public_count === 1 && list[0].private_count === 1 && list[1].public_count === 0, '（管理列表）公开回复数 / 私信数正确');
+  const raw = JSON.stringify(list);
+  assert(!raw.includes('secret') && !raw.includes('manage_token') && !raw.includes('pin_') && !raw.includes(b.manage_token), '（管理列表）不含联系方式、manage_token、口令字段');
+
+  // 82. 回复：公开 + 私信 + 已隐藏都返回，按时间正序
+  r = await callA('GET', `/api/admin/demands/${b.id}/replies`, undefined, K);
+  const reps = await r.json();
+  assert(r.status === 200 && reps.length === 2 && reps[0].body === '公开回复' && reps[1].is_private === true, '（管理回复）返回公开回复与私信');
+  assert(reps[0].hidden === true, '（管理回复）已隐藏回复也返回并标出');
+  r = await callA('GET', '/api/admin/demands/99999999-9999-4999-8999-999999999999/replies', undefined, K);
+  assert(r.status === 404, '（管理回复）不存在的需求 404');
+
+  // 83. 删除需求后同时清理回复，列表不再出现
+  r = await callA('DELETE', `/api/admin/demands/${b.id}`, undefined, K);
+  assert(r.status === 200 && dbA.tables.replies.length === 0, '（管理列表）删除需求同时清理回复');
+  r = await callA('GET', '/api/admin/demands', undefined, K);
+  assert((await r.json()).length === 1, '（管理列表）删除后列表更新');
+}
+
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);
