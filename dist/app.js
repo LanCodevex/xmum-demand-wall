@@ -2179,11 +2179,18 @@ function setLang(next) {
 }
 
 /* ================= XMUM 启动动画 ================= */
-const INTRO_SEEN_KEY = 'xmum_intro_seen';
+const INTRO_LAST_KEY = 'xmum_intro_last';
+const INTRO_LEGACY_KEY = 'xmum_intro_seen'; // 旧版「看过就永不再播」标记，已弃用
+const INTRO_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 function shouldPlayIntro() {
   try { if (new URLSearchParams(location.search).has('intro')) return true; } catch { /* 忽略 */ }
-  try { return localStorage.getItem(INTRO_SEEN_KEY) !== '1'; } catch { return true; }
+  try {
+    localStorage.removeItem(INTRO_LEGACY_KEY);
+    const last = Number(localStorage.getItem(INTRO_LAST_KEY));
+    if (!last) return true;
+    return Date.now() - last > INTRO_INTERVAL_MS;
+  } catch { return true; }
 }
 
 function svgEl(tag) {
@@ -2407,7 +2414,7 @@ function buildIntro() {
 }
 
 function startIntro() {
-  try { localStorage.setItem(INTRO_SEEN_KEY, '1'); } catch { /* 忽略 */ }
+  try { localStorage.setItem(INTRO_LAST_KEY, String(Date.now())); } catch { /* 忽略 */ }
   const intro = buildIntro();
 
   loadDemands(); // 动画开始即请求列表，结束时首页已有内容
