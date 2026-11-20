@@ -633,7 +633,7 @@ input, textarea, select { font-family: inherit; }
 .manual-copy-area { min-height: 170px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
 
 /* 举报（详情页低调文字按钮 + 原因选择） */
-.report-row { margin-top: 16px; display: flex; justify-content: flex-end; }
+.report-row { margin-top: 16px; display: flex; justify-content: flex-end; gap: 16px; }
 .btn-report {
   border: 0;
   background: transparent;
@@ -646,6 +646,12 @@ input, textarea, select { font-family: inherit; }
 .btn-report:active { color: var(--ink-2); }
 .report-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
 .report-grid .cat-chip { min-height: 40px; }
+
+/* 4 位数字口令：发布表单 + 「我是发帖人」弹窗 */
+.pin-input { max-width: 160px; font-size: 20px; letter-spacing: 8px; text-align: center; font-variant-numeric: tabular-nums; }
+.pin-input::placeholder { font-size: 14px; letter-spacing: 0; }
+.field-hint { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--meta); }
+.pin-error { margin: 10px 0 0; font-size: 13px; line-height: 1.5; color: var(--orange); }
 
 /* 成功弹窗 */
 .success-mark {
@@ -660,21 +666,10 @@ input, textarea, select { font-family: inherit; }
   margin: 0 auto 12px;
 }
 .success-hint { text-align: center; color: var(--ink-2); font-size: 14px; margin: 0 0 16px; }
-.code-box {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: rgba(20, 48, 79, 0.06);
-  border: 1.5px solid var(--site-accent);
-  border-radius: 12px;
-  padding: 14px;
-}
-.code-label { font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--ink-2); }
-.code-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 17px; font-weight: 600; word-break: break-all; color: var(--ink); }
-.code-hint { text-align: center; color: var(--orange); font-size: 12.5px; font-weight: 600; margin: 10px 0 0; }
 
 /* 我的发布 */
-.mine-claim { margin: 0 0 16px; }
+.mine-claim { margin: -8px 0 16px; }
+.mine-claim-link { padding-left: 0; }
 .claim-box { margin-top: 12px; border: 1px dashed var(--line-btn); border-radius: 12px; padding: 14px; }
 .claim-actions { display: flex; gap: 8px; margin-top: 12px; }
 .mine-list { display: flex; flex-direction: column; gap: 12px; }

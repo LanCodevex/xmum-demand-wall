@@ -1,5 +1,6 @@
 // 业务路由：依赖注入只用于本地测试；index.ts 保留 Deno.serve。
-// 此模块从不读取客户端提交的 owner 字段，也从不向前端泄露 manage_token（发布响应除外）。
+// 此模块从不读取客户端提交的 owner 字段；manage_token 只在两处返回：发布响应，以及口令认领成功（claim-pin）。
+// pin_hash / pin_fail_count / pin_locked_until 从不返回给前端。
 export function application({ db, BackendError, env = null }) {
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const isUuid = (v) => typeof v === 'string' && uuidRe.test(v);
@@ -31,6 +32,10 @@ export function application({ db, BackendError, env = null }) {
   const HELP_WINDOW_MS = 60 * 1000, HELP_MAX = 30;
   const REPORT_WINDOW_MS = 60 * 1000, REPORT_MAX = 20;
   const CLAIM_WINDOW_MS = 60 * 1000, CLAIM_MAX = 10;
+  // 口令认领：按设备每分钟 10 次（进程内）；按需求累计错 5 次锁 1 小时（存数据库，跨实例生效）
+  const PIN_CLAIM_WINDOW_MS = 60 * 1000, PIN_CLAIM_MAX = 10;
+  const PIN_MAX_FAILS = 5, PIN_LOCK_MS = 60 * 60 * 1000;
+  const pinRe = /^[0-9]{4}$/;
   // 回复：每设备每分钟 5 条、每小时 30 条（两档共用一个桶，同时满足才放行）
   const REPLY_TIERS = [{ max: 5, windowMs: 60 * 1000 }, { max: 30, windowMs: 60 * 60 * 1000 }];
   const buckets = new Map();
@@ -140,6 +145,25 @@ export function application({ db, BackendError, env = null }) {
     const v = env && env.get ? env.get('ADMIN_KEY') : null;
     return typeof v === 'string' && v.trim() ? v.trim() : null;
   };
+  // 口令哈希的服务端密钥：只从环境变量读，缺失时拒绝发布/认领（绝不退化成无密钥哈希）
+  const pinPepper = () => {
+    const v = env && env.get ? env.get('PIN_PEPPER') : null;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  };
+  const requirePepper = () => pinPepper() || fail('pin_not_configured', 503);
+  // hex(SHA-256(需求 id + 口令 + PIN_PEPPER))；id 固定 36 位、口令固定 4 位，拼接无歧义
+  async function pinHash(id, pin, pepper) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id + pin + pepper));
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  // 定长比较，避免按字节提前返回带来的时间差
+  function sameHash(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
+  }
+
   const requireAdmin = (request) => {
     const key = adminKey();
     if (!key) fail('admin_not_configured', 503);
@@ -206,7 +230,7 @@ export function application({ db, BackendError, env = null }) {
       return Response.json(list);
     }
 
-    // 发布：生成 manage_token，只随本次响应返回一次
+    // 发布：生成 manage_token（前端只存本机，不再展示给用户）；口令只存加盐哈希
     if (path === '/api/demands' && request.method === 'POST') {
       const body = await input(request);
       const category = body && body.category;
@@ -224,6 +248,11 @@ export function application({ db, BackendError, env = null }) {
         contact = t;
       }
 
+      // 4 位数字口令：必填，只接受字符串形式的 4 位数字
+      const pin = body && body.pin;
+      if (typeof pin !== 'string' || !pinRe.test(pin)) fail('invalid_pin', 400);
+      const pepper = requirePepper();
+
       // 通过输入校验后再计一次发布配额（非法请求不占用额度）
       if (!hit('post', sourceOf(request), POST_MAX, POST_WINDOW_MS).allowed) fail('rate_limited', 429);
 
@@ -233,6 +262,7 @@ export function application({ db, BackendError, env = null }) {
         id, category, title, description, contact,
         status: 'open', manage_token: manageToken, created_at: new Date().toISOString(),
         help_count: 0, hidden: false, is_sample: false,
+        pin_hash: await pinHash(id, pin, pepper), pin_fail_count: 0, pin_locked_until: null,
       }).select('id,category,title,description,contact,status,manage_token,created_at,help_count,is_sample'));
       if (!created || !created.length) fail('write_failed', 500);
       const out = { ...created[0] };
@@ -251,6 +281,50 @@ export function application({ db, BackendError, env = null }) {
       if (!found || !found.length) fail('manage_token_invalid', 403);
       if (found[0].hidden === true) fail('not_found', 404);
       return Response.json({ id: found[0].id });
+    }
+
+    // 口令认领：输入发帖时设置的 4 位口令，正确则返回 manage_token（前端存入本机「我的发布」）。
+    // 防暴力：① 按设备每分钟 10 次；② 按需求累计错 5 次锁 1 小时（锁定期间一律 429），成功后清零。
+    // 「累计」指只有认领成功才清零：锁定到期后再错一次会立刻重新锁 1 小时。
+    // 并发安全：先用「pin_fail_count 仍等于读到的值」做条件更新占用一次尝试，再比对口令，
+    // 这样并发请求无法共用同一个计数值多试几次；条件更新落空的请求直接 429。
+    const claimPinMatch = path.match(/^\/api\/demands\/([0-9a-f-]{36})\/claim-pin$/);
+    if (claimPinMatch && isUuid(claimPinMatch[1]) && request.method === 'POST') {
+      const body = await input(request);
+      const pin = body && body.pin;
+      if (typeof pin !== 'string' || !pinRe.test(pin)) fail('invalid_pin', 400);
+      const pepper = requirePepper();
+      if (!hit('claim-pin', sourceOf(request), PIN_CLAIM_MAX, PIN_CLAIM_WINDOW_MS).allowed) fail('rate_limited', 429);
+
+      const id = claimPinMatch[1];
+      const found = rows(await db.from('demands')
+        .select('id,hidden,is_sample,manage_token,pin_hash,pin_fail_count,pin_locked_until').eq('id', id).limit(1));
+      if (!found || !found.length || found[0].hidden === true) fail('not_found', 404);
+      const d = found[0];
+      if (d.is_sample === true) fail('sample_post', 400);
+      // 口令功能上线前的旧帖没有口令，只能用管理码找回
+      if (typeof d.pin_hash !== 'string' || !d.pin_hash) fail('pin_not_set', 409);
+
+      const now = Date.now();
+      const lockedUntil = d.pin_locked_until ? Date.parse(d.pin_locked_until) : NaN;
+      if (Number.isFinite(lockedUntil) && lockedUntil > now) fail('pin_locked', 429);
+
+      // 占用一次尝试：计数 +1；若这次达到上限，同一次写入里先挂上锁（口令正确再解除）
+      const prev = d.pin_fail_count;
+      const nextCount = num(prev) + 1;
+      const reserve = { pin_fail_count: nextCount };
+      if (nextCount >= PIN_MAX_FAILS) reserve.pin_locked_until = new Date(now + PIN_LOCK_MS).toISOString();
+      let q = db.from('demands').update(reserve).eq('id', id);
+      // 新帖发布时计数为 0，不会是 NULL；万一被手动清成 NULL，只能退化为无条件更新
+      if (typeof prev === 'number') q = q.eq('pin_fail_count', prev);
+      const reserved = rows(await q.select('id'));
+      if (!reserved || !reserved.length) fail('rate_limited', 429);
+
+      if (!sameHash(await pinHash(id, pin, pepper), d.pin_hash)) {
+        fail(nextCount >= PIN_MAX_FAILS ? 'pin_locked' : 'pin_invalid', nextCount >= PIN_MAX_FAILS ? 429 : 403);
+      }
+      rows(await db.from('demands').update({ pin_fail_count: 0, pin_locked_until: null }).eq('id', id).select('id'));
+      return Response.json({ id, manage_token: d.manage_token });
     }
 
     // 单独获取联系方式：详情页点击「查看联系方式」时调用（先按来源限流）

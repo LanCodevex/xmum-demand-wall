@@ -8,7 +8,10 @@ CREATE TABLE app.demands (
   manage_token text NOT NULL UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   help_count integer,
-  hidden boolean
+  hidden boolean,
+  pin_hash text,
+  pin_fail_count integer,
+  pin_locked_until timestamptz
 );
 CREATE INDEX demands_created_at_idx ON app.demands (created_at);
 

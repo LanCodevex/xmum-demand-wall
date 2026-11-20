@@ -64,8 +64,10 @@ function createFakeDb() {
 }
 
 // 模拟 Deno.env：get(key) 返回配置值，未配置返回 null
+// 默认带测试用 PIN_PEPPER（发布必须有它）；传 PIN_PEPPER: undefined 可模拟未配置
 function makeEnv(obj) {
-  return { get: (k) => (k in obj ? obj[k] : null) };
+  const all = { PIN_PEPPER: 'test-pepper', ...obj };
+  return { get: (k) => (typeof all[k] === 'string' ? all[k] : null) };
 }
 
 function req(method, path, body, headers) {
@@ -84,7 +86,7 @@ function assert(cond, label) {
 }
 
 const db = createFakeDb();
-const handle = application({ db, BackendError: FakeError });
+const handle = application({ db, BackendError: FakeError, env: makeEnv({}) });
 // 模拟部署环境的 errorResponse：把抛出的 BackendError 转成 JSON 响应
 const mkCall = (h) => async (m, p, b, hdr) => {
   try {
@@ -105,7 +107,7 @@ r = await call('GET', '/api/demands');
 assert(r.status === 200 && (await r.json()).length === 0, '空列表返回 []');
 
 // 3. 发布（含非法输入校验）
-r = await call('POST', '/api/demands', { category: 'group_buy', title: '  拼奶茶  ', description: '  一起拼奶茶  ', contact: '  wx: abc  ' });
+r = await call('POST', '/api/demands', { pin: '1234', category: 'group_buy', title: '  拼奶茶  ', description: '  一起拼奶茶  ', contact: '  wx: abc  ' });
 assert(r.status === 201, '发布返回 201');
 const created = await r.json();
 assert(created.title === '拼奶茶', '标题去首尾空格');
@@ -113,16 +115,16 @@ assert(typeof created.manage_token === 'string' && created.manage_token.length =
 assert(created.status === 'open', '默认状态 open');
 assert(created.help_count === 0, '发布返回 help_count=0');
 
-r = await call('POST', '/api/demands', { category: 'nope', title: 'x', description: 'y', contact: 'z' });
+r = await call('POST', '/api/demands', { pin: '1234', category: 'nope', title: 'x', description: 'y', contact: 'z' });
 assert(r.status === 400, '非法分类被拒绝');
 
-r = await call('POST', '/api/demands', { category: 'currency', title: 'x', description: 'y', contact: 'z' });
+r = await call('POST', '/api/demands', { pin: '1234', category: 'currency', title: 'x', description: 'y', contact: 'z' });
 assert(r.status === 400, '换汇分类被拒绝');
 
-r = await call('POST', '/api/demands', { category: 'study', title: 'x'.repeat(41), description: 'y', contact: 'z' });
+r = await call('POST', '/api/demands', { pin: '1234', category: 'study', title: 'x'.repeat(41), description: 'y', contact: 'z' });
 assert(r.status === 400, '标题超长被拒绝');
 
-r = await call('POST', '/api/demands', { category: 'study', title: '   ', description: 'y', contact: 'z' });
+r = await call('POST', '/api/demands', { pin: '1234', category: 'study', title: '   ', description: 'y', contact: 'z' });
 assert(r.status === 400, '空白标题被拒绝');
 
 // 4. 列表不含 contact / manage_token
@@ -171,29 +173,29 @@ r = await call('GET', '/api/nope');
 assert(r.status === 404, '未知路由返回 404');
 
 // 10. 排序：新发布的在前
-await call('POST', '/api/demands', { category: 'carpool', title: '拼车去机场', description: '明天上午', contact: 'wx2' });
+await call('POST', '/api/demands', { pin: '1234', category: 'carpool', title: '拼车去机场', description: '明天上午', contact: 'wx2' });
 r = await call('GET', '/api/demands');
 const list2 = await r.json();
 assert(list2.length === 1 && list2[0].title === '拼车去机场', '撤下的记录不再出现在列表，最新在前');
 
 // ---- 防刷：使用独立的 application 实例（独立内存桶），同一来源令牌 ----
 const db2 = createFakeDb();
-const call2 = mkCall(application({ db: db2, BackendError: FakeError }));
+const call2 = mkCall(application({ db: db2, BackendError: FakeError, env: makeEnv({}) }));
 const SRC = { 'x-dw-client': 'test-device-1' };
 
 // 11. 发布：同一来源 10 分钟内第 6 条被限流
 let postStatuses = [];
 for (let i = 0; i < 6; i++) {
-  const rr = await call2('POST', '/api/demands', { category: 'study', title: 'T' + i, description: 'D' + i, contact: 'C' + i }, SRC);
+  const rr = await call2('POST', '/api/demands', { pin: '1234', category: 'study', title: 'T' + i, description: 'D' + i, contact: 'C' + i }, SRC);
   postStatuses.push(rr.status);
 }
 assert(postStatuses.slice(0, 5).every((s) => s === 201), '前 5 条发布成功');
 assert(postStatuses[5] === 429, '第 6 条发布触发 429');
-const rl = await (await call2('POST', '/api/demands', { category: 'study', title: 'T6', description: 'D6', contact: 'C6' }, SRC)).json();
+const rl = await (await call2('POST', '/api/demands', { pin: '1234', category: 'study', title: 'T6', description: 'D6', contact: 'C6' }, SRC)).json();
 assert(rl.error === 'rate_limited', '限流返回 rate_limited');
 
 // 12. 发布：不同来源互不影响
-const rr2 = await call2('POST', '/api/demands', { category: 'study', title: 'other', description: 'd', contact: 'c' }, { 'x-dw-client': 'test-device-2' });
+const rr2 = await call2('POST', '/api/demands', { pin: '1234', category: 'study', title: 'other', description: 'd', contact: 'c' }, { 'x-dw-client': 'test-device-2' });
 assert(rr2.status === 201, '不同设备令牌来源不受前者限流影响');
 
 // 13. 联系方式：同一来源 1 分钟内第 21 次被限流（非法请求不占额度已在校验保证，这里全部合法）
@@ -211,7 +213,7 @@ const db3 = createFakeDb();
 const call3 = mkCall(application({ db: db3, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
 
 // 14. 发布
-r = await call3('POST', '/api/demands', { category: 'study', title: '求期末复习资料', description: '数学', contact: 'wx: help' });
+r = await call3('POST', '/api/demands', { pin: '1234', category: 'study', title: '求期末复习资料', description: '数学', contact: 'wx: help' });
 assert(r.status === 201, '（闭环）发布返回 201');
 const d3 = await r.json();
 
@@ -266,7 +268,7 @@ assert(r.status === 404, '管理员删除后详情 404');
 
 // 20. 未配置 ADMIN_KEY 的管理接口返回 503
 const db4 = createFakeDb();
-const call4 = mkCall(application({ db: db4, BackendError: FakeError }));
+const call4 = mkCall(application({ db: db4, BackendError: FakeError, env: makeEnv({}) }));
 r = await call4('GET', '/api/admin/reports', undefined, { 'x-admin-key': 'anything' });
 assert(r.status === 503, '未配置 ADMIN_KEY 返回 503');
 
@@ -275,7 +277,7 @@ const db5 = createFakeDb();
 const call5 = mkCall(application({ db: db5, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
 
 // 21. 组队分类可发布，新帖 is_sample=false
-r = await call5('POST', '/api/demands', { category: 'team', title: '统计学习组队 3=2', description: '还差 1 人', contact: 'wx: team' });
+r = await call5('POST', '/api/demands', { pin: '1234', category: 'team', title: '统计学习组队 3=2', description: '还差 1 人', contact: 'wx: team' });
 assert(r.status === 201, '组队分类发布返回 201');
 const dTeam = await r.json();
 assert(dTeam.is_sample === false, '新发布真实帖 is_sample=false');
@@ -318,10 +320,10 @@ assert(r.status === 404, '删示例后示例帖详情 404');
 
 // ---- 新增：跨设备找回 claim ----
 const db6 = createFakeDb();
-const call6 = mkCall(application({ db: db6, BackendError: FakeError }));
+const call6 = mkCall(application({ db: db6, BackendError: FakeError, env: makeEnv({}) }));
 
 // 25. 发布一条用于找回
-r = await call6('POST', '/api/demands', { category: 'study', title: '求自习搭子', description: '图书馆', contact: 'wx: claim' });
+r = await call6('POST', '/api/demands', { pin: '1234', category: 'study', title: '求自习搭子', description: '图书馆', contact: 'wx: claim' });
 assert(r.status === 201, '（claim）发布返回 201');
 const d6 = await r.json();
 
@@ -363,23 +365,23 @@ const db7 = createFakeDb();
 const call7 = mkCall(application({ db: db7, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
 
 // 31. 联系方式选填：不填可发布，has_contact=false；超长仍拒绝；详情不泄露 contact
-r = await call7('POST', '/api/demands', { category: 'study', title: '求高数笔记', description: '第三章' });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: '求高数笔记', description: '第三章' });
 assert(r.status === 201, '（回复）不填联系方式可发布');
 const d7 = await r.json();
 assert(d7.contact === '' && d7.has_contact === false, '（回复）不填联系方式返回空字符串 contact，has_contact=false');
 assert(db7.tables.demands.find((x) => x.id === d7.id).contact === '', '（回复）不填联系方式在库里存为空字符串（非 NULL）');
-r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: '   ' });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: 't', description: 'd', contact: '   ' });
 const dBlank = await r.json();
 assert(r.status === 201 && dBlank.has_contact === false, '（回复）空白联系方式视为未填');
 assert(db7.tables.demands.find((x) => x.id === dBlank.id).contact === '', '（回复）空白联系方式存为空字符串');
-r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: null });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: 't', description: 'd', contact: null });
 const dNull = await r.json();
 assert(r.status === 201 && db7.tables.demands.find((x) => x.id === dNull.id).contact === '', '（回复）contact=null 也存为空字符串');
-r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 'x'.repeat(51) });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: 't', description: 'd', contact: 'x'.repeat(51) });
 assert(r.status === 400, '（回复）联系方式超 50 字被拒绝');
-r = await call7('POST', '/api/demands', { category: 'study', title: 't', description: 'd', contact: 123 });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: 't', description: 'd', contact: 123 });
 assert(r.status === 400, '（回复）联系方式非字符串被拒绝');
-r = await call7('POST', '/api/demands', { category: 'study', title: '有联系方式', description: 'd', contact: 'wx: r' });
+r = await call7('POST', '/api/demands', { pin: '1234', category: 'study', title: '有联系方式', description: 'd', contact: 'wx: r' });
 const d7c = await r.json();
 r = await call7('GET', `/api/demands/${d7.id}`);
 let det7 = await r.json();
@@ -471,8 +473,8 @@ assert(r.status === 201, '（回复）不同设备不受限流影响');
   const realNow = Date.now;
   const base = realNow();
   const dbH = createFakeDb();
-  const callH = mkCall(application({ db: dbH, BackendError: FakeError }));
-  const dh = await (await callH('POST', '/api/demands', { category: 'study', title: 'h', description: 'h' })).json();
+  const callH = mkCall(application({ db: dbH, BackendError: FakeError, env: makeEnv({}) }));
+  const dh = await (await callH('POST', '/api/demands', { pin: '1234', category: 'study', title: 'h', description: 'h' })).json();
   const statuses = [];
   try {
     for (let i = 0; i < 31; i++) {
@@ -521,7 +523,7 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   const dbC = createFakeDb();
   const callC = mkCall(application({ db: dbC, BackendError: FakeError, env: makeEnv({ ADMIN_KEY: 'sk-admin-123' }) }));
   let mkSeq = 0; // 每次发布用不同设备令牌，避免触发「每设备 10 分钟 5 条」发布限流
-  const mk = async (title) => (await (await callC('POST', '/api/demands', { category: 'study', title, description: 'd' }, { 'x-dw-client': 'mk-' + (++mkSeq) })).json());
+  const mk = async (title) => (await (await callC('POST', '/api/demands', { pin: '1234', category: 'study', title, description: 'd' }, { 'x-dw-client': 'mk-' + (++mkSeq) })).json());
   // 给需求加 1 条公开、1 条私信，并让公开回复被举报 1 次
   const seed = async (d, tag) => {
     const pub = await (await callC('POST', `/api/demands/${d.id}/replies`, { body: 'pub' }, { 'x-dw-client': 'c-' + tag })).json();
@@ -613,6 +615,156 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   let inThrew = false;
   try { dbC.from('replies').delete().in('id', ['x']); } catch { inThrew = true; }
   assert(inThrew, '（级联）模拟数据库对 .in() 直接抛错');
+}
+
+// ---- 新增：4 位数字口令（发布设置 + claim-pin 认领）----
+{
+  const dbP = createFakeDb();
+  const callP = mkCall(application({ db: dbP, BackendError: FakeError, env: makeEnv({}) }));
+  let seq = 0;
+  const post = (extra, dev) => callP('POST', '/api/demands', { category: 'study', title: 't', description: 'd', ...extra }, { 'x-dw-client': dev || 'pin-post-' + (++seq) });
+  const claim = (id, pin, dev) => callP('POST', `/api/demands/${id}/claim-pin`, pin === undefined ? {} : { pin }, { 'x-dw-client': dev || 'pin-dev-' + (++seq) });
+  const rowOf = (id) => dbP.tables.demands.find((x) => x.id === id);
+
+  // 50. 发布：口令必填且只能是 4 位数字字符串
+  for (const bad of [undefined, '', '123', '12345', 'abcd', '12a4', ' 1234', '１２３４', 1234, null]) {
+    r = await post(bad === undefined ? {} : { pin: bad });
+    assert(r.status === 400 && (await r.json()).error === 'invalid_pin', `（口令）发布口令格式不对被拒绝：${JSON.stringify(bad)}`);
+  }
+  assert(dbP.tables.demands.length === 0, '（口令）格式不对的发布不写库');
+
+  // 51. 发布：库里只存哈希，响应不含口令/哈希；哈希 = SHA-256(id + 口令 + PIN_PEPPER)
+  r = await post({ pin: '0427' });
+  assert(r.status === 201, '（口令）合法口令发布返回 201');
+  const dp = await r.json();
+  assert(typeof dp.manage_token === 'string', '（口令）发布仍返回 manage_token 供本机「我的发布」');
+  assert(!('pin' in dp) && !('pin_hash' in dp) && !('pin_fail_count' in dp), '（口令）发布响应不含口令与哈希');
+  const stored = rowOf(dp.id);
+  const { createHash } = await import('node:crypto');
+  assert(stored.pin_hash === createHash('sha256').update(dp.id + '0427' + 'test-pepper').digest('hex'), '（口令）pin_hash = SHA-256(id + 口令 + PIN_PEPPER)');
+  assert(!JSON.stringify(stored).includes('"0427"'), '（口令）库里不存明文口令');
+  assert(stored.pin_fail_count === 0 && stored.pin_locked_until === null, '（口令）新帖失败次数 0、未锁定');
+  r = await callP('GET', `/api/demands/${dp.id}`);
+  const dpDetail = await r.json();
+  assert(!('pin_hash' in dpDetail) && !('manage_token' in dpDetail), '（口令）详情不返回 pin_hash / manage_token');
+  r = await callP('GET', '/api/demands');
+  assert((await r.json()).every((x) => !('pin_hash' in x) && !('pin_fail_count' in x) && !('pin_locked_until' in x)), '（口令）列表不返回口令相关字段');
+
+  // 52. 认领：口令正确返回 manage_token
+  r = await claim(dp.id, '0427');
+  const okClaim = await r.json();
+  assert(r.status === 200 && okClaim.id === dp.id && okClaim.manage_token === dp.manage_token, '（口令）口令正确返回 id 与 manage_token');
+  assert(!('pin_hash' in okClaim), '（口令）认领响应不含 pin_hash');
+
+  // 53. 认领：格式不对 400，不计失败次数
+  for (const bad of [undefined, '12', '12345', 'abcd', 1234]) {
+    r = await claim(dp.id, bad);
+    assert(r.status === 400 && (await r.json()).error === 'invalid_pin', `（口令）认领口令格式不对 400：${JSON.stringify(bad)}`);
+  }
+  assert(rowOf(dp.id).pin_fail_count === 0, '（口令）格式不对不计入失败次数');
+
+  // 54. 认领：错误口令 403 并累计；成功后清零
+  r = await claim(dp.id, '1111');
+  assert(r.status === 403 && (await r.json()).error === 'pin_invalid', '（口令）口令错误返回 403 pin_invalid');
+  assert(rowOf(dp.id).pin_fail_count === 1, '（口令）错误一次 pin_fail_count=1');
+  await claim(dp.id, '2222');
+  assert(rowOf(dp.id).pin_fail_count === 2, '（口令）错误两次 pin_fail_count=2');
+  r = await claim(dp.id, '0427');
+  assert(r.status === 200 && rowOf(dp.id).pin_fail_count === 0, '（口令）认领成功后失败次数清零');
+
+  // 55. 锁定：累计错 5 次锁 1 小时，锁定期间正确口令也 429；到期后可认领
+  const realNow = Date.now;
+  const base = realNow();
+  try {
+    Date.now = () => base;
+    const st = [];
+    for (let i = 0; i < 5; i++) st.push((await claim(dp.id, '9' + String(i).repeat(3))).status);
+    assert(st.slice(0, 4).every((x) => x === 403), '（口令）前 4 次错误返回 403');
+    assert(st[4] === 429, '（口令）第 5 次错误返回 429');
+    const locked = rowOf(dp.id);
+    assert(locked.pin_fail_count === 5 && Date.parse(locked.pin_locked_until) === base + 3600 * 1000, '（口令）错 5 次后 pin_locked_until = 1 小时后');
+    r = await claim(dp.id, '0427');
+    assert(r.status === 429 && (await r.json()).error === 'pin_locked', '（口令）锁定期间正确口令也返回 429 pin_locked');
+    r = await claim(dp.id, '1234');
+    assert(r.status === 429 && rowOf(dp.id).pin_fail_count === 5, '（口令）锁定期间的尝试不再计数');
+    Date.now = () => base + 59 * 60 * 1000;
+    r = await claim(dp.id, '0427');
+    assert(r.status === 429, '（口令）59 分钟时仍锁定');
+    // 到期后再错一次：累计未清零，立即重新锁 1 小时
+    Date.now = () => base + 61 * 60 * 1000;
+    r = await claim(dp.id, '5555');
+    assert(r.status === 429 && Date.parse(rowOf(dp.id).pin_locked_until) === base + 121 * 60 * 1000, '（口令）锁定到期后再错一次立即重新锁定');
+    Date.now = () => base + 122 * 60 * 1000;
+    r = await claim(dp.id, '0427');
+    assert(r.status === 200 && (await r.json()).manage_token === dp.manage_token, '（口令）锁定到期后口令正确可认领');
+    const cleared = rowOf(dp.id);
+    assert(cleared.pin_fail_count === 0 && cleared.pin_locked_until === null, '（口令）认领成功后清零并解除锁定');
+  } finally {
+    Date.now = realNow;
+  }
+
+  // 56. 锁定按需求：另一条需求不受影响
+  const dp2 = await (await post({ pin: '8888' })).json();
+  for (let i = 0; i < 5; i++) await claim(dp.id, '0000');
+  r = await claim(dp2.id, '8888');
+  assert(r.status === 200, '（口令）一条需求被锁不影响其他需求');
+  rowOf(dp.id).pin_locked_until = null; rowOf(dp.id).pin_fail_count = 0;
+
+  // 57. 并发：多个请求读到同一计数时只有一个能占用尝试，其余 429
+  {
+    const results = await Promise.all(['1000', '1001', '1002', '1003', '1004', '1005'].map((p) => claim(dp.id, p)));
+    const codes = results.map((x) => x.status);
+    const verdicts = codes.filter((c) => c === 403).length;
+    assert(codes.every((c) => c === 403 || c === 429), '（口令）并发错误口令只返回 403 或 429');
+    assert(verdicts >= 1 && verdicts === rowOf(dp.id).pin_fail_count, '（口令）并发时每个口令判定都对应一次已计数的尝试');
+    rowOf(dp.id).pin_locked_until = null; rowOf(dp.id).pin_fail_count = 0;
+  }
+
+  // 58. 旧帖没有口令：409 pin_not_set，且不计数
+  const legacyId = '66666666-6666-4666-8666-666666666601';
+  dbP.tables.demands.push({ id: legacyId, category: 'study', title: '旧帖', description: 'd', contact: '', status: 'open',
+    manage_token: 'legacy-token', created_at: new Date().toISOString(), help_count: 0, hidden: false, is_sample: false });
+  r = await claim(legacyId, '1234');
+  assert(r.status === 409 && (await r.json()).error === 'pin_not_set', '（口令）旧帖没有口令返回 409 pin_not_set');
+  assert(!('pin_fail_count' in rowOf(legacyId)) || !rowOf(legacyId).pin_fail_count, '（口令）旧帖认领不写失败次数');
+  r = await callP('POST', '/api/demands/claim', { manage_token: 'legacy-token' }, { 'x-dw-client': 'legacy-dev' });
+  assert(r.status === 200 && (await r.json()).id === legacyId, '（口令）旧帖仍可用管理码找回');
+
+  // 59. 不存在 / 被隐藏 / 示例帖
+  r = await claim('99999999-9999-4999-8999-999999999999', '1234');
+  assert(r.status === 404, '（口令）不存在的需求返回 404');
+  rowOf(dp2.id).hidden = true;
+  r = await claim(dp2.id, '8888');
+  assert(r.status === 404, '（口令）被隐藏的需求返回 404');
+  dbP.tables.demands.push({ id: '66666666-6666-4666-8666-666666666602', category: 'errand', title: 's', description: 's', contact: 's',
+    status: 'open', manage_token: 'sample-token', created_at: new Date().toISOString(), help_count: 0, hidden: false, is_sample: true });
+  r = await claim('66666666-6666-4666-8666-666666666602', '1234');
+  assert(r.status === 400 && (await r.json()).error === 'sample_post', '（口令）示例帖返回 400 sample_post');
+
+  // 60. 按设备限流：同设备每分钟 10 次（含错误），第 11 次 429；换设备不受影响
+  const dp3 = await (await post({ pin: '4321' })).json();
+  const devSt = [];
+  for (let i = 0; i < 11; i++) {
+    devSt.push((await claim(i % 2 ? dp3.id : legacyId, i % 2 ? '4321' : '0000', 'pin-rl')).status);
+  }
+  assert(devSt.slice(0, 10).every((x) => x !== 429), '（口令）同设备前 10 次不被设备限流');
+  assert(devSt[10] === 429, '（口令）同设备第 11 次触发 429');
+  r = await claim(dp3.id, '4321', 'pin-rl-2');
+  assert(r.status === 200, '（口令）不同设备不受前者限流影响');
+
+  // 61. 未配置 PIN_PEPPER：发布与认领都 503，不写入无密钥哈希
+  const dbN = createFakeDb();
+  const callN = mkCall(application({ db: dbN, BackendError: FakeError, env: makeEnv({ PIN_PEPPER: undefined }) }));
+  r = await callN('POST', '/api/demands', { category: 'study', title: 't', description: 'd', pin: '1234' });
+  assert(r.status === 503 && (await r.json()).error === 'pin_not_configured', '（口令）未配置 PIN_PEPPER 发布返回 503');
+  assert(dbN.tables.demands.length === 0, '（口令）未配置 PIN_PEPPER 不写库');
+  r = await callN('POST', `/api/demands/${dp.id}/claim-pin`, { pin: '1234' });
+  assert(r.status === 503, '（口令）未配置 PIN_PEPPER 认领返回 503');
+
+  // 62. 换了 PIN_PEPPER，旧哈希对不上（密钥确实参与哈希）
+  const callQ = mkCall(application({ db: dbP, BackendError: FakeError, env: makeEnv({ PIN_PEPPER: 'other-pepper' }) }));
+  r = await callQ('POST', `/api/demands/${dp3.id}/claim-pin`, { pin: '4321' }, { 'x-dw-client': 'pepper-dev' });
+  assert(r.status === 403, '（口令）PIN_PEPPER 不同则正确口令也无法认领');
 }
 
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

@@ -59,21 +59,22 @@ const I18N = {
     formContact: '联系方式',
     formContactPlaceholder: '选填：微信号等。不填的话，大家可以给你发私信',
     formOptional: '（选填）',
+    formPin: '设置 4 位数字口令',
+    formPinPlaceholder: '4 位数字',
+    formPinHint: '以后修改或撤下这条需求时用，别告诉别人',
+    requiredPin: '请设置 4 位数字口令',
     formSubmit: '发布需求',
     formCancel: '取消',
     charCount: (n, max) => `${n}/${max}`,
     requiredCategory: '请选择一个分类',
     requiredField: '请填写完整内容',
     successTitle: '已发布',
-    successHint: '请保存下面的管理码，用于以后修改需求状态。已自动保存到本机「我的发布」。',
-    manageCode: '管理码',
-    copyCode: '复制管理码',
-    codeRestoreHint: '换手机时用它找回',
+    successHint: '已发布。换了浏览器或手机时，在帖子详情页点「我是发帖人」，输入你的口令就能找回',
     done: '完成',
     mineTitle: '我的发布',
     mineEmpty: '本机还没有发布记录。发布需求后会自动出现在这里。',
-    mineHint: '本机发布的需求会显示在这里；换了设备可以用管理码找回。',
-    claimEntry: '用管理码找回',
+    mineHint: '本机发的需求会显示在这里。换了浏览器或手机？在帖子详情页点「我是发帖人」，输入口令找回',
+    claimEntry: '旧帖子用管理码找回',
     claimLabel: '管理码',
     claimPlaceholder: '粘贴发布时保存的管理码',
     claimSubmit: '找回',
@@ -81,6 +82,18 @@ const I18N = {
     claimEmpty: '请输入管理码',
     claimWrong: '管理码不正确，找不到对应需求。',
     claimDone: '已找回，加入本机「我的发布」',
+    ownerEntry: '我是发帖人',
+    pinTitle: '我是发帖人',
+    pinHint: '输入发帖时设置的 4 位数字口令，找回后可以在「我的发布」里改状态或撤下。',
+    pinLabel: '4 位数字口令',
+    pinSubmit: '确认',
+    pinCancel: '取消',
+    pinDone: '已加入我的发布',
+    pinFormat: '请输入 4 位数字',
+    pinWrong: '口令不对。同一条需求累计错 5 次会锁定 1 小时。',
+    pinLocked: '口令错误次数太多，这条需求已锁定 1 小时，请稍后再试。',
+    pinNotSet: '这条需求发布时还没有口令功能，请在「我的发布」里用管理码找回。',
+    pinNotConfigured: '口令功能暂时不可用，请稍后再试。',
     markTaken: '标记为已接单',
     markDone: '标记为已完成',
     statusUpdated: '状态已更新',
@@ -92,7 +105,7 @@ const I18N = {
     removeDone: '已撤下',
     errNetwork: '网络异常，请稍后重试。',
     errInvalidInput: '请检查输入内容（标题≤40字、描述≤500字、联系方式≤50字）。',
-    errManageToken: '管理码不正确，无法操作该需求。',
+    errManageToken: '本机保存的发帖凭据已失效，请在详情页点「我是发帖人」重新找回。',
     errRateLimited: '操作太频繁，请稍后再试。',
     errGeneric: '操作失败，请稍后重试。',
     errNotFound: '该需求已不存在。',
@@ -222,21 +235,22 @@ const I18N = {
     formContact: 'Contact',
     formContactPlaceholder: 'Optional: WeChat ID, etc. If left blank, people can send you private messages',
     formOptional: ' (optional)',
+    formPin: 'Set a 4-digit PIN',
+    formPinPlaceholder: '4 digits',
+    formPinHint: 'You’ll need it to edit or remove this post later. Don’t share it.',
+    requiredPin: 'Please set a 4-digit PIN',
     formSubmit: 'Post',
     formCancel: 'Cancel',
     charCount: (n, max) => `${n}/${max}`,
     requiredCategory: 'Please choose a category',
     requiredField: 'Please fill in all fields',
     successTitle: 'Published',
-    successHint: 'Save the management code below to change this demand’s status later. It was saved to “My Posts” on this device.',
-    manageCode: 'Management code',
-    copyCode: 'Copy code',
-    codeRestoreHint: 'Use it to restore on a new phone',
+    successHint: 'Published. On a new browser or phone, open the post, tap “I posted this” and enter your PIN to get it back.',
     done: 'Done',
     mineTitle: 'My Posts',
     mineEmpty: 'No posts on this device yet. Your published demands will appear here.',
-    mineHint: 'Posts from this device appear here. On a new device, restore them with your management code.',
-    claimEntry: 'Restore with code',
+    mineHint: 'Posts made on this device appear here. New browser or phone? Open the post, tap “I posted this” and enter your PIN.',
+    claimEntry: 'Older posts: restore with management code',
     claimLabel: 'Management code',
     claimPlaceholder: 'Paste the code saved when posting',
     claimSubmit: 'Restore',
@@ -244,6 +258,18 @@ const I18N = {
     claimEmpty: 'Enter the management code',
     claimWrong: 'Incorrect code; no matching demand.',
     claimDone: 'Restored to “My Posts” on this device',
+    ownerEntry: 'I posted this',
+    pinTitle: 'I posted this',
+    pinHint: 'Enter the 4-digit PIN you set when posting. You can then change its status or remove it in “My Posts”.',
+    pinLabel: '4-digit PIN',
+    pinSubmit: 'Confirm',
+    pinCancel: 'Cancel',
+    pinDone: 'Added to My Posts',
+    pinFormat: 'Enter 4 digits',
+    pinWrong: 'Wrong PIN. 5 wrong tries lock this post for 1 hour.',
+    pinLocked: 'Too many wrong tries. This post is locked for 1 hour. Please try again later.',
+    pinNotSet: 'This post was made before PINs existed. Restore it with its management code in “My Posts”.',
+    pinNotConfigured: 'PINs are temporarily unavailable. Please try again later.',
     markTaken: 'Mark as taken',
     markDone: 'Mark as done',
     statusUpdated: 'Status updated',
@@ -255,7 +281,7 @@ const I18N = {
     removeDone: 'Removed',
     errNetwork: 'Network error. Please try again later.',
     errInvalidInput: 'Please check input (title ≤40, description ≤500, contact ≤50).',
-    errManageToken: 'Incorrect management code; cannot modify this demand.',
+    errManageToken: 'The post credentials saved on this device are no longer valid. Open the post and tap “I posted this” to restore it.',
     errRateLimited: 'Too many operations. Please try again later.',
     errGeneric: 'Operation failed. Please try again later.',
     errNotFound: 'This demand no longer exists.',
@@ -373,7 +399,7 @@ const state = {
   activeId: null,
   activeContact: null,
   activeData: null, // 供切换语言时重建详情
-  lastToken: null, // 供切换语言时重建成功弹窗
+  pinDemand: null, // 「我是发帖人」口令弹窗的目标需求（切换语言时重建）
   lastShareDemand: null, // 成功弹窗的分享文案在切换语言时重建
   loaded: false, // 首次加载完成前，hero 数字显示灰色占位块
   adminKey: null, // 管理页输入的 ADMIN_KEY（仅存内存）
@@ -735,6 +761,7 @@ function closeModal(id) {
   if (id === '#modal-publish') resetPublishForm();
   if (id === '#modal-success') $('#modal-success').querySelector('.sheet').innerHTML = '';
   if (id === '#modal-manual') $('#modal-manual').querySelector('.sheet').innerHTML = '';
+  if (id === '#modal-pin') { $('#modal-pin').querySelector('.sheet').innerHTML = ''; state.pinDemand = null; }
   if (id === '#modal-detail') { state.activeId = null; state.activeContact = null; state.activeData = null; restoreBaseUrl(); }
   if (id === '#modal-mine' && feedDirty) { feedDirty = false; renderFeed(); }
   // 确认层通过任意关闭路径（背景/取消/Esc）都应 resolve(false)
@@ -893,10 +920,13 @@ function buildDetail(d) {
   shareWrap.appendChild(btnShare);
 
   const reportRow = el('div', 'report-row');
+  const btnOwner = el('button', 'btn-report', COPY.ownerEntry);
+  btnOwner.type = 'button';
+  btnOwner.addEventListener('click', () => openPinClaim(d));
   const btnReport = el('button', 'btn-report', COPY.report);
   btnReport.type = 'button';
   btnReport.addEventListener('click', () => openReport(d));
-  reportRow.appendChild(btnReport);
+  reportRow.append(btnOwner, btnReport);
 
   if (d.is_sample) sheet.append(head, meta, title, desc, time, contactBox, shareWrap);
   else sheet.append(head, meta, title, desc, time, contactBox, shareWrap, buildReplies(d, noContact), reportRow);
@@ -1111,6 +1141,111 @@ function contactErrText(err) {
   return msg + COPY.errCodeSuffix(code);
 }
 
+/* ================= 我是发帖人（4 位数字口令认领） ================= */
+// 口令输入框：遮蔽显示、数字键盘、只保留数字且最多 4 位（发布表单与认领弹窗共用）
+function pinInput(id, autocomplete) {
+  const input = el('input', 'input pin-input');
+  input.id = id;
+  input.type = 'password';
+  input.setAttribute('inputmode', 'numeric');
+  input.pattern = '[0-9]*';
+  input.maxLength = 4;
+  input.autocomplete = autocomplete;
+  input.placeholder = COPY.formPinPlaceholder;
+  input.addEventListener('input', () => {
+    const v = input.value.replace(/[^0-9]/g, '').slice(0, 4);
+    if (v !== input.value) input.value = v;
+  });
+  return input;
+}
+const PIN_RE = /^[0-9]{4}$/;
+
+function openPinClaim(d) {
+  // 本机已经有这条：直接打开「我的发布」
+  if (mineTokenFor(d.id)) { closeModal('#modal-detail'); openMine(); return; }
+  state.pinDemand = d;
+  buildPinSheet(d);
+  openModal('#modal-pin');
+  setTimeout(() => { try { $('#pin-input').focus(); } catch { /* 忽略 */ } }, 60);
+}
+
+function buildPinSheet(d) {
+  const sheet = $('#modal-pin .sheet');
+  sheet.innerHTML = '';
+
+  const head = el('div', 'sheet-head');
+  const h = el('h2', null, COPY.pinTitle);
+  h.id = 'pin-title';
+  head.appendChild(h);
+  const close = el('button', 'icon-btn', '✕');
+  close.type = 'button';
+  close.setAttribute('aria-label', COPY.close);
+  close.addEventListener('click', () => closeModal('#modal-pin'));
+  head.appendChild(close);
+  sheet.append(head, el('p', 'confirm-body', COPY.pinHint));
+
+  const form = el('form');
+  form.noValidate = true;
+  const label = el('label', 'form-label', COPY.pinLabel);
+  label.setAttribute('for', 'pin-input');
+  const input = pinInput('pin-input', 'off');
+  const errLine = el('p', 'pin-error');
+  errLine.setAttribute('role', 'alert');
+  errLine.hidden = true;
+
+  const actions = el('div', 'form-actions');
+  const btnCancel = el('button', 'btn btn-ghost', COPY.pinCancel);
+  btnCancel.type = 'button';
+  btnCancel.addEventListener('click', () => closeModal('#modal-pin'));
+  const btnOk = el('button', 'btn btn-primary', COPY.pinSubmit);
+  btnOk.type = 'submit';
+  actions.append(btnCancel, btnOk);
+
+  form.append(label, input, errLine, actions);
+  form.addEventListener('submit', (e) => { e.preventDefault(); submitPinClaim(d, input, errLine, btnOk); });
+  sheet.appendChild(form);
+}
+
+function pinErrText(code) {
+  if (code === 'invalid_pin') return COPY.pinFormat;
+  if (code === 'pin_invalid') return COPY.pinWrong;
+  if (code === 'pin_locked') return COPY.pinLocked;
+  if (code === 'pin_not_set') return COPY.pinNotSet;
+  if (code === 'pin_not_configured') return COPY.pinNotConfigured;
+  if (code === 'rate_limited') return COPY.errRateLimited;
+  if (code === 'not_found') return COPY.errNotFound;
+  if (code === 'network') return COPY.errNetwork;
+  return COPY.errGeneric;
+}
+
+async function submitPinClaim(d, input, errLine, btn) {
+  const pin = input.value;
+  const showErr = (msg) => { errLine.textContent = msg; errLine.hidden = false; };
+  if (!PIN_RE.test(pin)) { showErr(COPY.pinFormat); return; }
+  errLine.hidden = true;
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const res = await request(`/api/demands/${d.id}/claim-pin`, { method: 'POST', body: JSON.stringify({ pin }) });
+    if (!res || res.id !== d.id || typeof res.manage_token !== 'string') {
+      throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
+    }
+    addMine(res.id, res.manage_token);
+    closeModal('#modal-pin');
+    closeModal('#modal-detail');
+    toast(COPY.pinDone);
+    openMine();
+  } catch (err) {
+    input.value = '';
+    showErr(pinErrText(err.code));
+    try { input.focus(); } catch { /* 忽略 */ }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
 /* ================= 举报 ================= */
 function openReport(d) {
   if (readSet(REPORTED_KEY).has(d.id)) { toast(COPY.reportAlready); return; }
@@ -1257,6 +1392,14 @@ function buildPublishForm() {
   });
   fContact.append(lContact, iContact, cContact);
 
+  // 4 位数字口令（必填）
+  const fPin = el('div', 'form-field');
+  const lPin = el('label', 'form-label', COPY.formPin);
+  lPin.setAttribute('for', 'publish-pin');
+  lPin.appendChild(el('span', 'req', ' *'));
+  const iPin = pinInput('publish-pin', 'new-password');
+  fPin.append(lPin, iPin, el('p', 'field-hint', COPY.formPinHint));
+
   // 操作
   const actions = el('div', 'form-actions');
   const btnCancel = el('button', 'btn btn-ghost', COPY.formCancel);
@@ -1268,10 +1411,10 @@ function buildPublishForm() {
 
   const form = el('form');
   const fHint = el('p', 'form-hint', COPY.formHint);
-  form.append(head, fHint, fCat, fTitle, fDesc, fContact, actions);
+  form.append(head, fHint, fCat, fTitle, fDesc, fContact, fPin, actions);
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    submitPublish(btnSubmit, { iTitle, tDesc, iContact });
+    submitPublish(btnSubmit, { iTitle, tDesc, iContact, iPin });
   });
 
   sheet.appendChild(form);
@@ -1288,6 +1431,8 @@ async function submitPublish(btn, fields) {
   const description = fields.tDesc.value.trim();
   const contact = fields.iContact.value.trim();
   if (!title || !description) { toast(COPY.requiredField); return; }
+  const pin = fields.iPin.value;
+  if (!PIN_RE.test(pin)) { toast(COPY.requiredPin); try { fields.iPin.focus(); } catch { /* 忽略 */ } return; }
 
   btn.disabled = true;
   const original = btn.textContent;
@@ -1295,7 +1440,7 @@ async function submitPublish(btn, fields) {
   try {
     const created = await request('/api/demands', {
       method: 'POST',
-      body: JSON.stringify({ category: selectedCategory, title, description, contact }),
+      body: JSON.stringify({ category: selectedCategory, title, description, contact, pin }),
     });
     if (!created || typeof created.id !== 'string' || typeof created.manage_token !== 'string') {
       throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
@@ -1306,6 +1451,8 @@ async function submitPublish(btn, fields) {
     loadDemands();
   } catch (err) {
     toast(err.code === 'invalid_input' ? COPY.errInvalidInput
+      : err.code === 'invalid_pin' ? COPY.requiredPin
+      : err.code === 'pin_not_configured' ? COPY.pinNotConfigured
       : err.code === 'rate_limited' ? COPY.errRateLimited
       : err.code === 'network' ? COPY.errNetwork : COPY.errGeneric);
   } finally {
@@ -1314,8 +1461,8 @@ async function submitPublish(btn, fields) {
   }
 }
 
+// 管理码（manage_token）只存本机「我的发布」，不再展示给用户；找回靠「我是发帖人」+ 口令
 function buildSuccess(demand) {
-  const token = demand && typeof demand.manage_token === 'string' ? demand.manage_token : '';
   const sheet = $('#modal-success .sheet');
   sheet.innerHTML = '';
 
@@ -1332,18 +1479,8 @@ function buildSuccess(demand) {
   sheet.appendChild(mark);
   sheet.appendChild(el('p', 'success-hint', COPY.successHint));
 
-  const codeBox = el('div', 'code-box');
-  codeBox.appendChild(el('span', 'code-label', COPY.manageCode));
-  codeBox.appendChild(el('code', 'code-value', token));
-  const copyBtn = el('button', 'btn btn-primary btn-block', COPY.copyCode);
-  copyBtn.type = 'button';
-  copyBtn.addEventListener('click', () => copyText(token, copyBtn));
-  codeBox.appendChild(copyBtn);
-  const codeHint = el('p', 'code-hint', COPY.codeRestoreHint);
-
-  const btnShare = el('button', 'btn btn-ghost btn-block', COPY.shareBtn);
+  const btnShare = el('button', 'btn btn-primary btn-block', COPY.shareBtn);
   btnShare.type = 'button';
-  btnShare.style.marginTop = '12px';
   btnShare.addEventListener('click', () => copyShareText(buildShareText(demand), btnShare));
 
   const done = el('button', 'btn btn-ghost btn-block', COPY.done);
@@ -1351,11 +1488,10 @@ function buildSuccess(demand) {
   done.style.marginTop = '16px';
   done.addEventListener('click', () => closeModal('#modal-success'));
 
-  sheet.append(codeBox, codeHint, btnShare, done);
+  sheet.append(btnShare, done);
 }
 
 function showSuccess(demand) {
-  state.lastToken = demand && demand.manage_token;
   state.lastShareDemand = demand;
   buildSuccess(demand);
   openModal('#modal-success');
@@ -1483,9 +1619,9 @@ async function openMine() {
 
   sheet.appendChild(el('p', 'detail-time', COPY.mineHint));
 
-  // 跨设备找回入口：输入管理码 → 服务端校验 → 加入本机「我的发布」
+  // 旧帖找回入口（口令功能上线前发的帖子）：输入管理码 → 服务端校验 → 加入本机「我的发布」
   const claimWrap = el('div', 'mine-claim');
-  const claimToggle = el('button', 'btn btn-secondary btn-block', COPY.claimEntry);
+  const claimToggle = el('button', 'btn-report mine-claim-link', COPY.claimEntry);
   claimToggle.type = 'button';
   const claimBox = el('div', 'claim-box');
   claimBox.hidden = true;
@@ -2039,6 +2175,7 @@ function setLang(next) {
   renderFeed();
   if ($('#modal-detail') && !$('#modal-detail').hidden && state.activeData) buildDetail(state.activeData);
   if ($('#modal-success') && !$('#modal-success').hidden && state.lastShareDemand) buildSuccess(state.lastShareDemand);
+  if ($('#modal-pin') && !$('#modal-pin').hidden && state.pinDemand) buildPinSheet(state.pinDemand);
 }
 
 /* ================= XMUM 启动动画 ================= */
@@ -2329,6 +2466,7 @@ function init() {
   backdropClick('#modal-confirm', '.sheet');
   backdropClick('#modal-manual', '.sheet');
   backdropClick('#modal-report', '.sheet');
+  backdropClick('#modal-pin', '.sheet');
 
   window.addEventListener('popstate', handlePopState);
   window.addEventListener('scroll', updateGlassbar, { passive: true });
@@ -2346,7 +2484,7 @@ function init() {
   setLang(lang);
 
   // Esc 仅关闭最上层弹窗（手动复制/确认 > 详情/成功 > 表单/我的）
-  const MODAL_ORDER = ['#modal-manual', '#modal-confirm', '#modal-report', '#modal-detail', '#modal-success', '#modal-publish', '#modal-mine'];
+  const MODAL_ORDER = ['#modal-manual', '#modal-confirm', '#modal-pin', '#modal-report', '#modal-detail', '#modal-success', '#modal-publish', '#modal-mine'];
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     for (const id of MODAL_ORDER) { const m = $(id); if (m && !m.hidden) { closeModal(id); return; } }
