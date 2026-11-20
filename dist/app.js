@@ -176,6 +176,9 @@ const I18N = {
     replyErrInvalid: '回复需为 1–200 字',
     replyErrSample: '示例帖不能回复',
     privateCount: (n) => `私信 ${n}`,
+    newReplies: (n) => `${n} 条新回复`,
+    mineNewAria: (n) => `我的发布，${n} 条新回复`,
+    aboutA2HS: '想天天用？用 Safari 或 Chrome 打开，添加到主屏幕。',
     privateNone: '暂无私信',
     privateTitle: '私信（仅你可见）',
     privateHide: '收起',
@@ -358,6 +361,9 @@ const I18N = {
     replyErrInvalid: 'Replies must be 1–200 characters',
     replyErrSample: 'Sample posts can’t be replied to',
     privateCount: (n) => `Private messages ${n}`,
+    newReplies: (n) => `${n} new ${n === 1 ? 'reply' : 'replies'}`,
+    mineNewAria: (n) => `My Posts, ${n} new ${n === 1 ? 'reply' : 'replies'}`,
+    aboutA2HS: 'Using it every day? Open it in Safari or Chrome and add it to your Home Screen.',
     privateNone: 'No private messages yet',
     privateTitle: 'Private messages (only you can see)',
     privateHide: 'Hide',
@@ -576,6 +582,128 @@ function addToSet(key, id) {
   const s = readSet(key);
   s.add(id);
   try { localStorage.setItem(key, JSON.stringify([...s])); } catch { /* 忽略 */ }
+}
+
+/* ================= 新回复提醒 ================= */
+// 本机记录「我的发布」每条上次查看时的回复数：{ [id]: { p: 公开回复数, s: 私信数 } }。
+// 公开回复数由服务端算好，不含发布者自己的回复，所以自己回复不会触发提醒。
+const SEEN_KEY = 'xmum_demand_wall_reply_seen';
+const COUNTS_BATCH = 20; // 与服务端单次上限一致
+const COUNTS_MIN_GAP_MS = 15000; // 前端节流：频繁切回页面也不会撞上服务端每分钟 10 次的限流
+const replyCounts = new Map(); // id -> { p, s }：最近一次从服务端拿到的数
+const pendingRead = new Set(); // 计数还没拿到时就打开了的帖子，拿到后直接记为已读
+let countsLastAt = 0;
+let countsInflight = null;
+
+const countNum = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+function readSeen() {
+  try {
+    const o = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}');
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  } catch { return {}; }
+}
+function writeSeen(o) {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(o)); } catch { /* 忽略 */ }
+}
+// 刚发布的帖子：基线记为 0，之后的每条回复都算新回复
+function initSeen(id) {
+  const seen = readSeen();
+  seen[id] = { p: 0, s: 0 };
+  writeSeen(seen);
+}
+function forgetSeen(id) {
+  const seen = readSeen();
+  delete seen[id];
+  writeSeen(seen);
+  replyCounts.delete(id);
+  pendingRead.delete(id);
+}
+function newReplyCount(id, seen) {
+  const c = replyCounts.get(id);
+  const s = seen[id];
+  if (!c || !s) return 0;
+  return Math.max(0, c.p - countNum(s.p)) + Math.max(0, c.s - countNum(s.s));
+}
+
+// 打开某条自己帖子的详情或私信列表：整条记为已读
+function markRepliesRead(id) {
+  if (!mineTokenFor(id)) return;
+  const c = replyCounts.get(id);
+  if (!c) { pendingRead.add(id); return; }
+  const seen = readSeen();
+  seen[id] = { p: c.p, s: c.s };
+  writeSeen(seen);
+  updateReplyBadges();
+}
+
+async function refreshReplyCounts(force) {
+  const mine = readMine().slice(0, COUNTS_BATCH);
+  if (!mine.length) { replyCounts.clear(); updateReplyBadges(); return; }
+  if (countsInflight) return countsInflight;
+  if (!force && Date.now() - countsLastAt < COUNTS_MIN_GAP_MS) return;
+  countsLastAt = Date.now();
+  countsInflight = (async () => {
+    try {
+      const data = await request('/api/my/reply-counts', {
+        method: 'POST',
+        body: JSON.stringify(mine.map((m) => ({ id: m.id, token: m.token }))),
+      });
+      const seen = readSeen();
+      const mineIds = new Set(readMine().map((m) => m.id));
+      const next = {};
+      replyCounts.clear();
+      for (const x of Array.isArray(data) ? data : []) {
+        if (!x || typeof x.id !== 'string' || !mineIds.has(x.id)) continue;
+        const c = { p: countNum(x.public_count), s: countNum(x.private_count) };
+        replyCounts.set(x.id, c);
+        const s = seen[x.id];
+        if (!s || pendingRead.has(x.id)) next[x.id] = { p: c.p, s: c.s }; // 第一次见到（如找回的旧帖）不提醒历史回复
+        else next[x.id] = { p: Math.min(countNum(s.p), c.p), s: Math.min(countNum(s.s), c.s) }; // 有回复被隐藏时下调基线
+        pendingRead.delete(x.id);
+      }
+      // 本次没返回的（超出 20 条、暂时取不到）保留原记录；已不在「我的发布」里的清掉
+      for (const [id, s] of Object.entries(seen)) if (!(id in next) && mineIds.has(id)) next[id] = s;
+      writeSeen(next);
+    } catch { /* 静默失败：提醒只是锦上添花，不打扰用户 */ }
+    finally {
+      countsInflight = null;
+      updateReplyBadges();
+    }
+  })();
+  return countsInflight;
+}
+
+function syncMineNewTag(item, n) {
+  let tag = item.querySelector('.mine-item-new');
+  if (n > 0) {
+    if (!tag) {
+      tag = el('span', 'mine-item-new');
+      const top = item.querySelector('.mine-item-top');
+      if (top) top.appendChild(tag); else item.prepend(tag);
+    }
+    tag.textContent = COPY.newReplies(n);
+  } else if (tag) tag.remove();
+}
+
+// 红点：手机端顶栏、玻璃浮层顶栏、桌面端左栏的「我的发布」按钮，以及弹窗里的帖子卡片
+function updateReplyBadges() {
+  const seen = readSeen();
+  let total = 0;
+  for (const m of readMine()) total += newReplyCount(m.id, seen);
+  ['#btn-mine', '#glass-mine', '#side-mine'].forEach((sel) => {
+    const b = $(sel);
+    if (!b) return;
+    if (total > 0) {
+      b.dataset.badge = total > 99 ? '99+' : String(total);
+      b.setAttribute('aria-label', COPY.mineNewAria(total));
+    } else {
+      delete b.dataset.badge;
+      b.removeAttribute('aria-label');
+    }
+  });
+  document.querySelectorAll('#modal-mine .mine-item[data-id]').forEach((item) => {
+    syncMineNewTag(item, newReplyCount(item.dataset.id, seen));
+  });
 }
 
 /* ================= 分类/状态小部件 ================= */
@@ -952,6 +1080,7 @@ function hideDetailOnly() {
 }
 
 function showDetail(d) {
+  markRepliesRead(d.id); // 自己的帖子：打开详情即记为已读
   state.activeId = d.id;
   state.activeContact = null;
   state.activeData = d;
@@ -1413,6 +1542,7 @@ async function submitPinClaim(d, input, errLine, btn) {
       throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
     }
     addMine(res.id, res.manage_token);
+    refreshReplyCounts(true); // 找回的帖子：拿到当前回复数作为基线
     closeModal('#modal-pin');
     leaveDetailForDialog();
     toast(COPY.pinDone);
@@ -1627,6 +1757,7 @@ async function submitPublish(btn, fields) {
       throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
     }
     addMine(created.id, created.manage_token);
+    initSeen(created.id);
     closeModal('#modal-publish');
     showSuccess(created);
     loadDemands();
@@ -1788,6 +1919,7 @@ async function openMine() {
   const sheet = $('#modal-mine .sheet');
   sheet.innerHTML = '';
   openModal('#modal-mine');
+  refreshReplyCounts();
 
   const head = el('div', 'sheet-head');
   head.appendChild(el('h2', null, COPY.mineTitle));
@@ -1861,6 +1993,7 @@ async function openMine() {
 
   valid.sort((a, b) => (a.data.created_at < b.data.created_at ? 1 : -1));
   valid.forEach(({ mine, data }) => list.appendChild(mineItem(mine, data)));
+  updateReplyBadges();
 }
 
 async function submitClaim(rawToken, btn) {
@@ -1876,6 +2009,7 @@ async function submitClaim(rawToken, btn) {
     });
     if (!res || typeof res.id !== 'string') throw Object.assign(new Error('invalid_response'), { code: 'invalid_response' });
     addMine(res.id, token);
+    refreshReplyCounts(true);
     toast(COPY.claimDone);
     openMine(); // 重渲染，列表里出现找回的需求
   } catch (err) {
@@ -1891,11 +2025,13 @@ async function submitClaim(rawToken, btn) {
 
 function mineItem(mine, d) {
   const item = el('div', 'mine-item');
+  item.dataset.id = mine.id;
   const top = el('div', 'mine-item-top');
   top.appendChild(categoryStamp(d.category));
   top.appendChild(statusTextNode(d.status));
   const title = el('p', 'mine-item-title', d.title);
   item.append(top, title);
+  syncMineNewTag(item, newReplyCount(mine.id, readSeen()));
   if (numCount(d.help_count) > 0) item.appendChild(el('p', 'mine-item-help', COPY.helpCount(numCount(d.help_count))));
 
   // 私信：显示数量，点开查看列表，并可以「发布者」身份公开回复
@@ -1932,7 +2068,7 @@ function mineItem(mine, d) {
   };
   privToggle.addEventListener('click', () => {
     privPanel.hidden = !privPanel.hidden;
-    if (!privPanel.hidden) renderPrivPanel();
+    if (!privPanel.hidden) { renderPrivPanel(); markRepliesRead(mine.id); }
     syncToggle();
   });
   request(`/api/demands/${mine.id}/replies/private`, { headers: { 'x-manage-token': mine.token } })
@@ -2004,7 +2140,9 @@ async function removeDemand(mine, d, item, btn) {
       headers: { 'x-manage-token': mine.token },
     });
     removeMine(mine.id);
+    forgetSeen(mine.id);
     item.remove();
+    updateReplyBadges();
     toast(COPY.removeDone);
     if (isWide() && state.activeId === mine.id) { // 右栏正显示被撤下的这条：换回默认
       state.demands = state.demands.filter((x) => x.id !== mine.id);
@@ -2337,6 +2475,7 @@ function renderStatic() {
   $('#about-why').textContent = COPY.aboutWhy;
   $('#about-fx').textContent = COPY.aboutFx;
   $('#about-safe').textContent = COPY.aboutSafe;
+  $('#about-a2hs').textContent = COPY.aboutA2HS;
   $('#pane').setAttribute('aria-label', COPY.detailTitle);
   document.querySelectorAll('#open-only, #side-open-only').forEach((sw) => {
     const lbl = sw.querySelector('.switch-label');
@@ -2350,6 +2489,7 @@ function renderStatic() {
     if (lang === 'en') note.textContent = COPY.langNote;
   }
   updateHero();
+  updateReplyBadges(); // 按钮文字被重置后，同步红点的无障碍标签
 }
 
 function setLang(next) {
@@ -2697,6 +2837,13 @@ function init() {
     for (const id of MODAL_ORDER) { const m = $(id); if (m && !m.hidden) { closeModal(id); return; } }
   });
 
+  // 新回复提醒：打开页面时拉一次；回到页面、页面重新可见时再拉（前端节流 15 秒）
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !isAdminHash()) refreshReplyCounts();
+  });
+  window.addEventListener('pageshow', (e) => { if (e.persisted && !isAdminHash()) refreshReplyCounts(); });
+  window.addEventListener('focus', () => { if (!isAdminHash()) refreshReplyCounts(); });
+
   if (isAdminHash()) {
     enterAdmin();
   } else if (shouldPlayIntro()) {
@@ -2709,6 +2856,7 @@ function init() {
     const hashId = detailIdFromHash();
     if (hashId) openDetailById(hashId);
   }
+  if (!isAdminHash()) refreshReplyCounts(true);
 }
 
 document.addEventListener('DOMContentLoaded', init);

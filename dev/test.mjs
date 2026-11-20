@@ -805,4 +805,91 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   assert(r.status === 400, '（描述）缺标题仍被拒绝');
 }
 
+// ---- 新回复提醒：POST /api/my/reply-counts ----
+{
+  const dbC = createFakeDb();
+  const callC = mkCall(application({ db: dbC, BackendError: FakeError, env: makeEnv() }));
+  let seqC = 0;
+  const publish = async () => {
+    const res = await callC('POST', '/api/demands', { pin: '1234', category: 'study', title: '求资料' }, { 'x-dw-client': 'cnt-pub-' + (++seqC) });
+    return res.json();
+  };
+  const a = await publish();
+  const b = await publish();
+  const counts = (body, client) => callC('POST', '/api/my/reply-counts', body, { 'x-dw-client': client || 'cnt-' + (++seqC) });
+  const replyAs = (id, body, extra, hdr) => callC('POST', `/api/demands/${id}/replies`, { body, ...extra }, { 'x-dw-client': 'cnt-r-' + (++seqC), ...hdr });
+
+  // 66. 无回复时都是 0
+  r = await counts([{ id: a.id, token: a.manage_token }]);
+  let cj = await r.json();
+  assert(r.status === 200 && cj.length === 1 && cj[0].id === a.id && cj[0].public_count === 0 && cj[0].private_count === 0, '（回复数）无回复时公开/私信均为 0');
+
+  // 67. 公开回复、私信分别计数；发布者自己的回复不算；隐藏的不算
+  await replyAs(a.id, '公开 1');
+  await replyAs(a.id, '公开 2');
+  await replyAs(a.id, '私信 1', { is_private: true });
+  await replyAs(a.id, '发布者回复', {}, { 'x-manage-token': a.manage_token });
+  await replyAs(b.id, '给 b 的私信', { is_private: true });
+  const hiddenReply = await (await replyAs(a.id, '会被隐藏')).json();
+  dbC.tables.replies.find((x) => x.id === hiddenReply.id).hidden = true;
+  r = await counts([{ id: a.id, token: a.manage_token }, { id: b.id, token: b.manage_token }]);
+  cj = await r.json();
+  const ca = cj.find((x) => x.id === a.id), cb = cj.find((x) => x.id === b.id);
+  assert(r.status === 200 && ca && ca.public_count === 2 && ca.private_count === 1, '（回复数）公开 2、私信 1，不含发布者回复与隐藏回复');
+  assert(cb && cb.public_count === 0 && cb.private_count === 1, '（回复数）多条需求分别计数');
+
+  // 68. 响应只含 id 与计数，不泄露 token 或回复内容
+  assert(cj.every((x) => Object.keys(x).sort().join(',') === 'id,private_count,public_count'), '（回复数）只返回 id 与两个计数');
+  assert(!JSON.stringify(cj).includes(a.manage_token) && !JSON.stringify(cj).includes('私信 1'), '（回复数）不含 token 与回复内容');
+
+  // 69. token 错误 / 缺失 / 非字符串、id 格式错误、不存在、重复、示例帖、已隐藏：跳过不报错
+  const sampleId = crypto.randomUUID(), sampleToken = crypto.randomUUID();
+  dbC.tables.demands.push({ id: sampleId, category: 'study', title: '示例', description: '', contact: '', status: 'open', manage_token: sampleToken, created_at: new Date().toISOString(), help_count: 0, hidden: false, is_sample: true });
+  r = await counts([
+    { id: a.id, token: b.manage_token },
+    { id: a.id },
+    { id: a.id, token: 123 },
+    { id: 'not-a-uuid', token: a.manage_token },
+    { id: crypto.randomUUID(), token: a.manage_token },
+    null,
+    'x',
+    { id: sampleId, token: sampleToken },
+    { id: b.id, token: b.manage_token },
+    { id: b.id, token: b.manage_token },
+  ]);
+  cj = await r.json();
+  assert(r.status === 200 && cj.length === 1 && cj[0].id === b.id, '（回复数）无效条目被跳过，只返回 token 正确的一条（且去重）');
+  dbC.tables.demands.find((x) => x.id === b.id).hidden = true;
+  r = await counts([{ id: b.id, token: b.manage_token }]);
+  assert(r.status === 200 && (await r.json()).length === 0, '（回复数）已隐藏的需求被跳过');
+  r = await counts([]);
+  assert(r.status === 200 && (await r.json()).length === 0, '（回复数）空数组返回 []');
+
+  // 70. 请求体必须是数组，最多 20 条
+  r = await counts({ id: a.id, token: a.manage_token });
+  assert(r.status === 400, '（回复数）非数组请求体被拒绝');
+  r = await counts(Array.from({ length: 21 }, () => ({ id: a.id, token: a.manage_token })));
+  assert(r.status === 400, '（回复数）超过 20 条被拒绝');
+  r = await counts(Array.from({ length: 20 }, () => ({ id: a.id, token: a.manage_token })));
+  assert(r.status === 200, '（回复数）20 条可以');
+  r = await callC('GET', '/api/my/reply-counts');
+  assert(r.status === 404, '（回复数）GET 不可用');
+
+  // 71. 按设备限流：每分钟 10 次，第 11 次 429；换设备不受影响
+  let okCount = 0, limited = false;
+  for (let i = 0; i < 11; i++) {
+    const res = await counts([{ id: a.id, token: a.manage_token }], 'cnt-flood');
+    if (res.status === 200) okCount++;
+    else if (res.status === 429) limited = true;
+  }
+  assert(okCount === 10 && limited, '（回复数）同设备每分钟 10 次，第 11 次被限流');
+  r = await counts([{ id: a.id, token: a.manage_token }], 'cnt-other');
+  assert(r.status === 200, '（回复数）其他设备不受影响');
+
+  // 72. 只读：不修改任何表
+  const before = JSON.stringify(dbC.tables);
+  await counts([{ id: a.id, token: a.manage_token }]);
+  assert(JSON.stringify(dbC.tables) === before, '（回复数）只读，不写数据库');
+}
+
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

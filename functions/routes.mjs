@@ -36,6 +36,8 @@ export function application({ db, BackendError, env = null }) {
   const PIN_CLAIM_WINDOW_MS = 60 * 1000, PIN_CLAIM_MAX = 10;
   const PIN_MAX_FAILS = 5, PIN_LOCK_MS = 60 * 60 * 1000;
   const pinRe = /^[0-9]{4}$/;
+  // 新回复提醒：按设备每分钟 10 次，每次最多查 20 条
+  const COUNTS_WINDOW_MS = 60 * 1000, COUNTS_MAX = 10, COUNTS_ITEMS = 20;
   // 回复：每设备每分钟 5 条、每小时 30 条（两档共用一个桶，同时满足才放行）
   const REPLY_TIERS = [{ max: 5, windowMs: 60 * 1000 }, { max: 30, windowMs: 60 * 60 * 1000 }];
   const buckets = new Map();
@@ -44,7 +46,7 @@ export function application({ db, BackendError, env = null }) {
   function sweep(now) {
     if (now - lastSweep < 60 * 1000) return;
     lastSweep = now;
-    const maxAge = Math.max(POST_WINDOW_MS, CONTACT_WINDOW_MS, HELP_WINDOW_MS, REPORT_WINDOW_MS,
+    const maxAge = Math.max(POST_WINDOW_MS, CONTACT_WINDOW_MS, HELP_WINDOW_MS, REPORT_WINDOW_MS, COUNTS_WINDOW_MS,
       ...REPLY_TIERS.map((t) => t.windowMs));
     for (const [key, arr] of buckets) {
       const kept = arr.filter((t) => now - t < maxAge);
@@ -470,6 +472,37 @@ export function application({ db, BackendError, env = null }) {
       const out = (Array.isArray(list) ? list : [])
         .filter((x) => x.is_private === true && x.hidden !== true)
         .map((x) => ({ id: x.id, body: x.body, created_at: x.created_at }));
+      return Response.json(out);
+    }
+
+    // 新回复提醒（只读）：请求体 [{id, token}]，最多 20 条；逐条校验 manage_token，
+    // 返回每条的公开回复数（不含发布者自己的回复）与私信数，均不含已隐藏的。
+    // id 格式不对 / token 不对 / 需求不存在或已隐藏 / 示例帖：直接跳过，不报错，也不区分原因。
+    // 只返回计数，绝不返回 token 或回复内容。
+    if (path === '/api/my/reply-counts' && request.method === 'POST') {
+      const body = await input(request);
+      if (!Array.isArray(body) || body.length > COUNTS_ITEMS) fail('invalid_input', 400);
+      if (!hit('reply-counts', sourceOf(request), COUNTS_MAX, COUNTS_WINDOW_MS).allowed) fail('rate_limited', 429);
+      const out = [];
+      const seen = new Set();
+      for (const item of body) {
+        const id = item && item.id;
+        const token = item && item.token;
+        if (!isUuid(id) || typeof token !== 'string' || !token || token.length > 64 || seen.has(id)) continue;
+        seen.add(id);
+        const found = rows(await db.from('demands').select('id,hidden,is_sample,manage_token').eq('id', id).limit(1));
+        const d = Array.isArray(found) && found.length ? found[0] : null;
+        if (!d || d.hidden === true || d.is_sample === true || !tokenMatches(d, token)) continue;
+        const list = rows(await db.from('replies').select('id,is_private,is_owner,hidden')
+          .eq('demand_id', id).limit(1000));
+        let pub = 0, priv = 0;
+        for (const x of Array.isArray(list) ? list : []) {
+          if (!x || x.hidden === true) continue;
+          if (x.is_private === true) priv += 1;
+          else if (x.is_owner !== true) pub += 1;
+        }
+        out.push({ id, public_count: pub, private_count: priv });
+      }
       return Response.json(out);
     }
 
