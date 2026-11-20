@@ -34,6 +34,8 @@ function createFakeDb() {
           return Promise.resolve().then(() => {
             // 故障注入：被标记的表返回数据库错误（模拟线上清理失败）
             if (failTables.has(table)) return { data: null, error: { code: 'fake_db_failure', status: 500 } };
+            // 模拟平台数据库：单次查询 limit 超过 1000 直接报错（线上管理页曾因 limit 10000 加载失败）
+            if (limit > 1000) return { data: null, error: { code: 'limit_exceeded', status: 400 } };
             let data;
             if (mode === 'insert') {
               const row = { ...values, created_at: values.created_at || new Date().toISOString() };
@@ -942,6 +944,27 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   assert(r.status === 200 && dbA.tables.replies.length === 0, '（管理列表）删除需求同时清理回复');
   r = await callA('GET', '/api/admin/demands', undefined, K);
   assert((await r.json()).length === 1, '（管理列表）删除后列表更新');
+
+  // 84. 回复数统计失败：列表照常返回，回复数为 null，不报错
+  const origErr = console.error; const logged = [];
+  console.error = (...args) => logged.push(args.join(' '));
+  dbA.failTables.add('replies');
+  try {
+    r = await callA('GET', '/api/admin/demands', undefined, K);
+  } finally {
+    dbA.failTables.delete('replies');
+    console.error = origErr;
+  }
+  const degraded = await r.json();
+  assert(r.status === 200 && degraded.length === 1, '（管理列表）统计回复失败时列表照常返回');
+  assert(degraded[0].public_count === null && degraded[0].private_count === null, '（管理列表）统计失败时回复数为 null');
+  assert(logged.some((x) => x.includes('admin_reply_count_failed')), '（管理列表）统计失败记录日志');
+
+  // 85. 所有管理查询的 limit 都在平台上限内（假 DB 对 limit > 1000 报错）
+  r = await callA('GET', `/api/admin/demands/${a.id}/replies`, undefined, K);
+  assert(r.status === 200, '（管理回复）查询 limit 不超过平台上限');
+  r = await callA('GET', '/api/admin/reports', undefined, K);
+  assert(r.status === 200, '（举报列表）查询 limit 不超过平台上限');
 }
 
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

@@ -2353,8 +2353,17 @@ function exitAdmin() {
 }
 
 const adminHeaders = () => ({ 'x-admin-key': state.adminKey });
-const adminErrText = (err, fallback) => (err.code === 'unauthorized' ? COPY.adminWrong
-  : err.code === 'admin_not_configured' ? COPY.adminNotConfigured : fallback);
+// 管理页失败提示：按原因给文案，末尾一律附错误码便于排查（同 contactErrText）
+function adminErrText(err, fallback) {
+  const code = (err && err.code) || 'generic';
+  const msg = code === 'unauthorized' ? COPY.adminWrong
+    : code === 'admin_not_configured' ? COPY.adminNotConfigured
+    : code === 'network' ? COPY.errNetwork : fallback;
+  return msg + COPY.errCodeSuffix(code);
+}
+// 回复数：服务端统计失败时为 null，显示「—」
+const adminCount = (v) => (v === null || v === undefined ? '—' : numCount(v));
+const adminCountsText = (d) => COPY.adminReplyCounts(adminCount(d.public_count), adminCount(d.private_count));
 
 // 登录后按当前视图加载：举报列表 / 全部需求
 function loadAdmin() {
@@ -2399,14 +2408,9 @@ async function loadAdminReports() {
     if (state.adminView !== 'reports') return;
     renderAdminReports(Array.isArray(data) ? data : []);
   } catch (err) {
+    if (state.adminView !== 'reports') return;
     list.innerHTML = '';
-    const box = el('div', 'feed-state');
-    const art = el('div', 'state-art');
-    art.innerHTML = SVG_ERR;
-    box.appendChild(art);
-    box.appendChild(el('p', null, err.code === 'unauthorized' ? COPY.adminWrong
-      : err.code === 'admin_not_configured' ? COPY.adminNotConfigured : COPY.adminLoadError));
-    list.appendChild(box);
+    list.appendChild(adminStateBox(SVG_ERR, adminErrText(err, COPY.adminLoadError)));
   }
 }
 
@@ -2446,8 +2450,7 @@ function renderAdminTools() {
       loadAdminReports();
       loadDemands();
     } catch (err) {
-      toast(err.code === 'unauthorized' ? COPY.adminWrong
-        : err.code === 'admin_not_configured' ? COPY.adminNotConfigured : COPY.adminLoadError);
+      toast(adminErrText(err, COPY.errGeneric));
     } finally {
       btn.disabled = false;
     }
@@ -2515,7 +2518,7 @@ async function adminRemove(id, btn, title) {
     loadAdminReports();
   } catch (err) {
     btn.disabled = false;
-    toast(err.code === 'unauthorized' ? COPY.adminWrong : COPY.errGeneric);
+    toast(adminErrText(err, COPY.errGeneric));
   }
 }
 
@@ -2527,7 +2530,7 @@ async function adminRestore(id, btn) {
     loadAdminReports();
   } catch (err) {
     btn.disabled = false;
-    toast(err.code === 'unauthorized' ? COPY.adminWrong : COPY.errGeneric);
+    toast(adminErrText(err, COPY.errGeneric));
   }
 }
 
@@ -2605,7 +2608,7 @@ function adminDemandCard(d) {
   card.appendChild(top);
 
   card.appendChild(el('p', 'admin-card-desc' + (d.description ? '' : ' is-empty'), d.description || COPY.adminNoDescription));
-  const counts = el('p', 'admin-card-reasons', COPY.adminReplyCounts(numCount(d.public_count), numCount(d.private_count)));
+  const counts = el('p', 'admin-card-reasons', adminCountsText(d));
   card.appendChild(counts);
 
   const replies = el('div', 'admin-replies');
@@ -2661,7 +2664,7 @@ async function loadAdminReplies(d, box, counts) {
     // 用实际取到的回复刷新计数
     d.public_count = list.filter((r) => !r.is_private).length;
     d.private_count = list.filter((r) => r.is_private).length;
-    counts.textContent = COPY.adminReplyCounts(d.public_count, d.private_count);
+    counts.textContent = adminCountsText(d);
     box.innerHTML = '';
     if (!list.length) { box.appendChild(el('p', 'reply-empty', COPY.adminRepliesEmpty)); return; }
     list.forEach((r) => box.appendChild(adminReplyItem(r, d, box, counts)));
@@ -2699,7 +2702,7 @@ function adminReplyItem(r, d, box, counts) {
     item.remove();
     if (r.is_private) d.private_count = Math.max(0, numCount(d.private_count) - 1);
     else d.public_count = Math.max(0, numCount(d.public_count) - 1);
-    counts.textContent = COPY.adminReplyCounts(d.public_count, d.private_count);
+    counts.textContent = adminCountsText(d);
     if (!box.querySelector('.reply-item')) box.appendChild(el('p', 'reply-empty', COPY.adminRepliesEmpty));
   });
   top.appendChild(bDel);

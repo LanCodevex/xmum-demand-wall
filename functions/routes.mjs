@@ -16,8 +16,8 @@ export function application({ db, BackendError, env = null }) {
   const FEED_COLUMNS = LIST_COLUMNS + ',contact';
   // 回复对外字段：不含 is_private / report_count / hidden
   const REPLY_COLUMNS = 'id,body,is_owner,created_at';
-  // 管理页：全部需求列表上限、回复扫描上限
-  const ADMIN_DEMAND_LIST = 1000, ADMIN_REPLY_SCAN = 10000;
+  // 管理页：全部需求列表上限、回复扫描上限（平台数据库单次查询最多 limit 1000，超过会直接报错）
+  const ADMIN_DEMAND_LIST = 300, ADMIN_REPLY_SCAN = 1000;
   const LIMITS = { title: 40, description: 500, contact: 50, list: 300, reply: 200, replyList: 200 };
 
   const fail = (code, status) => { throw new BackendError(code, status); };
@@ -562,17 +562,23 @@ export function application({ db, BackendError, env = null }) {
       const raw = rows(await db.from('demands').select(LIST_COLUMNS)
         .order('created_at', { ascending: false }).limit(ADMIN_DEMAND_LIST));
       const list = Array.isArray(raw) ? raw : [];
-      // 一次取回复的 demand_id/is_private 在内存里计数，避免逐条查询
-      const reps = rows(await db.from('replies').select('demand_id,is_private').limit(ADMIN_REPLY_SCAN));
-      const counts = new Map();
-      for (const r of Array.isArray(reps) ? reps : []) {
-        if (!r || !r.demand_id) continue;
-        const c = counts.get(r.demand_id) || { pub: 0, priv: 0 };
-        if (r.is_private === true) c.priv += 1; else c.pub += 1;
-        counts.set(r.demand_id, c);
+      // 一次取回复的 demand_id/is_private 在内存里计数，避免逐条查询。
+      // 统计是附加信息：失败只记日志、回复数一律返回 null，需求列表照常返回。
+      let counts = new Map();
+      try {
+        const reps = rows(await db.from('replies').select('demand_id,is_private').limit(ADMIN_REPLY_SCAN));
+        for (const r of Array.isArray(reps) ? reps : []) {
+          if (!r || !r.demand_id) continue;
+          const c = counts.get(r.demand_id) || { pub: 0, priv: 0 };
+          if (r.is_private === true) c.priv += 1; else c.pub += 1;
+          counts.set(r.demand_id, c);
+        }
+      } catch (error) {
+        console.error('admin_reply_count_failed', error && (error.code || error.message));
+        counts = null;
       }
       return Response.json(list.map((d) => {
-        const c = counts.get(d.id) || { pub: 0, priv: 0 };
+        const c = counts ? (counts.get(d.id) || { pub: 0, priv: 0 }) : { pub: null, priv: null };
         return {
           id: d.id, category: d.category, title: d.title, description: d.description,
           status: d.status, created_at: d.created_at, help_count: num(d.help_count),
