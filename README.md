@@ -75,7 +75,7 @@ XMUM Demand Wall is an anonymous mutual-help board for students of Xiamen Univer
 │   ├── index.ts           # 入口：装配平台运行时与业务路由
 │   └── routes.mjs         # 全部业务接口与校验、限流逻辑
 ├── dev/
-│   └── test.mjs           # 本地逻辑测试（内存假数据库，197 项断言）
+│   └── test.mjs           # 本地逻辑测试（内存假数据库，209 项断言）
 ├── docs/screenshots/      # 线上 375px 截图
 ├── migrations/            # 平台 migration 文件
 ├── schema.sql             # 表结构参考（实际变更走平台 migration）
@@ -92,7 +92,7 @@ XMUM Demand Wall is an anonymous mutual-help board for students of Xiamen Univer
 node dev/test.mjs
 ```
 
-测试向 `routes.mjs` 注入内存假数据库与假环境变量（含测试用 `PIN_PEPPER`），覆盖发布校验、管理凭据权限、联系方式按需返回、限流、举报自动隐藏、管理员处置、示例帖规则、回复/私信/回复举报与回复限流，以及 4 位口令的格式校验、哈希存储、认领正确/错误、累计 5 次锁定 1 小时、并发计数、旧帖没有口令、按设备限流、未配置密钥等 197 项断言。它验证的是路由业务逻辑，不代表云端数据库与入口隔离已验收。
+测试向 `routes.mjs` 注入内存假数据库与假环境变量（含测试用 `PIN_PEPPER`），覆盖发布校验、管理凭据权限、联系方式按需返回、限流、举报自动隐藏、管理员处置、示例帖规则、回复/私信/回复举报与回复限流，以及 4 位口令的格式校验、哈希存储、认领正确/错误、累计 5 次锁定 1 小时、并发计数、旧帖没有口令、按设备限流、未配置密钥等 209 项断言。它验证的是路由业务逻辑，不代表云端数据库与入口隔离已验收。
 
 前端为纯静态文件，任意静态服务器即可预览（如 `npx serve dist`）；接口需部署到 Qoder Sites 后才可用。
 

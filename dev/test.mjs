@@ -767,4 +767,42 @@ assert(r.status === 404, '（回复）重复删除返回 404');
   assert(r.status === 403, '（口令）PIN_PEPPER 不同则正确口令也无法认领');
 }
 
+// ---- 描述选填 ----
+{
+  const dbD = createFakeDb();
+  const callD = mkCall(application({ db: dbD, BackendError: FakeError, env: makeEnv() }));
+  let seqD = 0;
+  const postD = (extra) => callD('POST', '/api/demands', { pin: '1234', category: 'study', title: '求自习搭子', ...extra }, { 'x-dw-client': 'desc-opt-' + (++seqD) });
+  const stored = (id) => dbD.tables.demands.find((x) => x.id === id);
+
+  // 63. 不传描述可发布，存为空字符串（非 NULL）
+  r = await postD({});
+  assert(r.status === 201, '（描述）不传 description 可发布');
+  const dd1 = await r.json();
+  assert(dd1.description === '' && stored(dd1.id).description === '', '（描述）不传 description 存为空字符串');
+  r = await callD('GET', `/api/demands/${dd1.id}`);
+  assert(r.status === 200 && (await r.json()).description === '', '（描述）详情返回空描述');
+
+  // 64. 空字符串 / 空白 / null 都视为未填
+  for (const [v, label] of [['', '空字符串'], ['   ', '空白'], [null, 'null']]) {
+    r = await postD({ description: v });
+    const x = await r.json();
+    assert(r.status === 201 && stored(x.id).description === '', `（描述）${label}描述可发布并存为空字符串`);
+  }
+
+  // 65. 有内容仍去首尾空格、限 500 字、必须是字符串；标题仍必填
+  r = await postD({ description: '  图书馆三楼  ' });
+  assert(r.status === 201 && (await r.json()).description === '图书馆三楼', '（描述）有内容时去首尾空格');
+  r = await postD({ description: 'x'.repeat(500) });
+  assert(r.status === 201, '（描述）500 字可发布');
+  r = await postD({ description: 'x'.repeat(501) });
+  assert(r.status === 400, '（描述）超 500 字被拒绝');
+  r = await postD({ description: 123 });
+  assert(r.status === 400, '（描述）非字符串被拒绝');
+  r = await postD({ title: '   ' });
+  assert(r.status === 400, '（描述）不填描述时空白标题仍被拒绝');
+  r = await postD({ title: undefined });
+  assert(r.status === 400, '（描述）缺标题仍被拒绝');
+}
+
 console.log(`\n通过 ${passed} 项断言${process.exitCode ? '（存在失败）' : ''}`);

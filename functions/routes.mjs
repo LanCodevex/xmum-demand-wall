@@ -236,8 +236,16 @@ export function application({ db, BackendError, env = null }) {
       const category = body && body.category;
       if (!CATEGORIES.includes(category)) fail('invalid_input', 400);
       const title = clean(body && body.title, LIMITS.title);
-      const description = clean(body && body.description, LIMITS.description);
-      if (!title || !description) fail('invalid_input', 400);
+      if (!title) fail('invalid_input', 400);
+      // 描述选填：缺省/null/空白 → 存空字符串 ''（description 列保持 NOT NULL）；有内容则必须是字符串且 ≤500 字
+      const rawDescription = body && body.description;
+      let description = '';
+      if (rawDescription !== undefined && rawDescription !== null) {
+        if (typeof rawDescription !== 'string') fail('invalid_input', 400);
+        const t = rawDescription.trim();
+        if (t.length > LIMITS.description) fail('invalid_input', 400);
+        description = t;
+      }
       // 联系方式选填：缺省/空白 → 存空字符串 ''（contact 列保持 NOT NULL）；有内容则必须是字符串且 ≤50 字
       const rawContact = body && body.contact;
       let contact = '';

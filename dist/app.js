@@ -54,8 +54,8 @@ const I18N = {
     formTitle: '标题',
     formTitlePlaceholder: '一句话说明你的需求',
     formDescription: '描述',
-    formDescriptionPlaceholder: '补充时间、地点、数量等细节',
-    formDescriptionPlaceholderTeam: '比赛或课程名称、还差几人、你能做什么',
+    formDescriptionPlaceholder: '选填：时间、地点、数量等细节',
+    formDescriptionPlaceholderTeam: '选填：比赛或课程名称、还差几人、你能做什么',
     formContact: '联系方式',
     formContactPlaceholder: '选填：微信号等。不填的话，大家可以给你发私信',
     formOptional: '（选填）',
@@ -230,8 +230,8 @@ const I18N = {
     formTitle: 'Title',
     formTitlePlaceholder: 'One line describing your demand',
     formDescription: 'Description',
-    formDescriptionPlaceholder: 'Add time, place, quantity and details',
-    formDescriptionPlaceholderTeam: 'Contest or course name, how many more people you need, what you can do',
+    formDescriptionPlaceholder: 'Optional: time, place, quantity and other details',
+    formDescriptionPlaceholderTeam: 'Optional: contest or course name, how many more people you need, what you can do',
     formContact: 'Contact',
     formContactPlaceholder: 'Optional: WeChat ID, etc. If left blank, people can send you private messages',
     formOptional: ' (optional)',
@@ -696,7 +696,7 @@ function listItem(d) {
 
   const body = el('div', 'item-body');
   body.appendChild(el('h3', 'item-title', d.title));
-  body.appendChild(el('p', 'item-desc', d.description));
+  if (d.description) body.appendChild(el('p', 'item-desc', d.description));
 
   const meta = el('div', 'item-meta');
   meta.appendChild(el('span', 'item-cat', COPY.categories[d.category] || d.category));
@@ -891,7 +891,7 @@ function buildDetail(d) {
   if (d.status !== 'open') meta.appendChild(el('span', 'detail-status', COPY.status[d.status]));
 
   const title = el('h3', 'detail-title', d.title);
-  const desc = el('p', 'detail-desc', d.description);
+  const desc = d.description ? el('p', 'detail-desc', d.description) : null; // 描述选填：为空则不显示段落
   const time = el('p', 'detail-time', relTime(d.created_at));
 
   // 没留联系方式的真实帖：不显示「我能帮，看联系方式」，改由回复区引导发私信
@@ -928,8 +928,8 @@ function buildDetail(d) {
   btnReport.addEventListener('click', () => openReport(d));
   reportRow.append(btnOwner, btnReport);
 
-  if (d.is_sample) sheet.append(head, meta, title, desc, time, contactBox, shareWrap);
-  else sheet.append(head, meta, title, desc, time, contactBox, shareWrap, buildReplies(d, noContact), reportRow);
+  if (d.is_sample) sheet.append(...[head, meta, title, desc, time, contactBox, shareWrap].filter(Boolean));
+  else sheet.append(...[head, meta, title, desc, time, contactBox, shareWrap, buildReplies(d, noContact), reportRow].filter(Boolean));
 }
 
 /* ================= 回复（公开回复 + 仅发帖人可见的私信） ================= */
@@ -1366,7 +1366,7 @@ function buildPublishForm() {
   // 描述
   const fDesc = el('div', 'form-field');
   const lDesc = el('label', 'form-label', COPY.formDescription);
-  lDesc.appendChild(el('span', 'req', ' *'));
+  lDesc.appendChild(el('span', 'optional', COPY.formOptional));
   const tDesc = el('textarea', 'textarea');
   tDesc.placeholder = COPY.formDescriptionPlaceholder;
   tDesc.maxLength = LIMITS.description;
@@ -1430,7 +1430,7 @@ async function submitPublish(btn, fields) {
   const title = fields.iTitle.value.trim();
   const description = fields.tDesc.value.trim();
   const contact = fields.iContact.value.trim();
-  if (!title || !description) { toast(COPY.requiredField); return; }
+  if (!title) { toast(COPY.requiredField); return; }
   const pin = fields.iPin.value;
   if (!PIN_RE.test(pin)) { toast(COPY.requiredPin); try { fields.iPin.focus(); } catch { /* 忽略 */ } return; }
 
@@ -1526,7 +1526,7 @@ function buildShareText(d) {
   return [
     `【${COPY.shareAppName} · ${cat}】`,
     d.title || '',
-    truncDesc(d.description),
+    ...(d.description ? [truncDesc(d.description)] : []),
     `${COPY.shareStatusPrefix}${st}`,
     `${d.is_sample || demandHasContact(d) ? COPY.shareCta : COPY.shareCtaNoContact}${deepLink(d.id)}`,
   ].join('\n');
