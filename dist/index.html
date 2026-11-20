@@ -11,6 +11,39 @@
 </head>
 <body>
   <div class="app" id="app">
+    <!-- 桌面端左栏（≥768px 显示，手机端隐藏） -->
+    <aside class="side" id="side">
+      <div class="side-top">
+        <div class="side-brand" id="side-brand"></div>
+        <div class="lang-switch" id="side-lang-switch" role="group" aria-label="语言 / Language">
+          <button type="button" data-lang="zh">中</button>
+          <button type="button" data-lang="en">EN</button>
+        </div>
+      </div>
+      <section class="hero side-hero" id="side-hero">
+        <p class="hero-line1"></p>
+        <p class="hero-line2"></p>
+        <p class="hero-line3"></p>
+      </section>
+      <nav class="side-cats" id="side-cats" aria-label="分类筛选"></nav>
+      <button id="side-open-only" class="switch side-switch" type="button" role="switch" aria-checked="false">
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+        <span class="switch-label"></span>
+      </button>
+      <div class="side-actions">
+        <button class="btn btn-primary side-publish" id="side-publish" type="button"></button>
+        <button class="btn btn-ghost side-mine" id="side-mine" type="button"></button>
+      </div>
+      <section class="side-about" id="side-about">
+        <h2 class="side-about-title" id="about-title"></h2>
+        <p id="about-why"></p>
+        <ul>
+          <li id="about-fx"></li>
+          <li id="about-safe"></li>
+        </ul>
+      </section>
+    </aside>
+
     <!-- 顶部一行（未滚动时） -->
     <header class="topbar" id="topbar">
       <h1 class="brand-title" id="brand-title"></h1>
@@ -52,6 +85,11 @@
 
     <main class="feed" id="feed" aria-live="polite"></main>
     <footer class="footer" id="footer"></footer>
+
+    <!-- 桌面端右栏详情面板（≥1024px 显示） -->
+    <aside class="pane" id="pane">
+      <div class="pane-sheet" id="pane-sheet"></div>
+    </aside>
   </div>
 
   <!-- 玻璃浮层顶栏（滚动后出现） -->

@@ -36,6 +36,11 @@ const I18N = {
     loadError: '加载失败',
     retry: '重试',
     footer: '有需求就发，能帮就帮一把',
+    aboutTitle: '关于这面墙',
+    aboutWhy: '群里的消息一刷就沉，需求发出去常常没人回。这面墙把需求按分类留下来，想帮忙的同学随时找得到。',
+    aboutFx: '本站不提供换汇撮合，换汇请走银行等正规渠道。',
+    aboutSafe: '交易前当面确认，别提前转账。',
+    paneEmpty: '这里还没有需求',
     detailTitle: '需求详情',
     close: '关闭',
     viewContact: '我能帮，看联系方式',
@@ -212,6 +217,11 @@ const I18N = {
     loadError: 'Failed to load',
     retry: 'Retry',
     footer: 'Post what you need. Help where you can.',
+    aboutTitle: 'About this wall',
+    aboutWhy: 'In group chats, requests get buried within minutes and often go unanswered. This wall keeps them sorted by category, so classmates who can help can always find them.',
+    aboutFx: 'We don’t match currency exchanges. Please use banks or licensed channels.',
+    aboutSafe: 'Meet in person first. Don’t pay in advance.',
+    paneEmpty: 'Nothing posted here yet',
     detailTitle: 'Demand details',
     close: 'Close',
     viewContact: 'I can help · See contact',
@@ -405,6 +415,12 @@ const state = {
   adminKey: null, // 管理页输入的 ADMIN_KEY（仅存内存）
   reportDemand: null, // 当前举报目标需求
 };
+
+/* 桌面三栏（≥1024px）：详情显示在右栏面板而不是弹窗。
+   paneExplicit：右栏内容是用户点选/深链接打开的（true），还是「没选中时默认显示最新一条」（false）。 */
+const WIDE_MQ = window.matchMedia('(min-width: 1024px)');
+const isWide = () => WIDE_MQ.matches;
+let paneExplicit = false;
 
 /* 撕角动画标记：发布者把状态改成已接单后，回到列表时该条撕角翻折出现 */
 const tearAnimateIds = new Set();
@@ -625,6 +641,8 @@ function renderFeedError() {
   box.appendChild(btn);
   feed.appendChild(box);
   updateHero();
+  updateSideCounts();
+  if (isWide() && !paneExplicit) { const h = $('#pane-sheet'); if (h) h.innerHTML = ''; }
 }
 
 function filterDemands() {
@@ -652,23 +670,153 @@ function rankOf(d) {
   return 3; // done
 }
 
-function renderFeed() {
-  const feed = $('#feed');
-  feed.innerHTML = '';
-  const list = filterDemands().slice().sort((a, b) => {
+function sortedFeed() {
+  return filterDemands().slice().sort((a, b) => {
     const ra = rankOf(a), rb = rankOf(b);
     if (ra !== rb) return ra - rb;
     return a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0; // 同组内时间倒序
   });
-  if (!list.length) {
-    feed.appendChild(emptyState());
-    tearAnimateIds.clear();
-    updateHero();
-    return;
-  }
-  list.forEach((d) => feed.appendChild(listItem(d)));
+}
+
+function renderFeed() {
+  const feed = $('#feed');
+  feed.innerHTML = '';
+  const list = sortedFeed();
+  if (!list.length) feed.appendChild(emptyState());
+  else list.forEach((d) => feed.appendChild(listItem(d)));
   tearAnimateIds.clear();
   updateHero();
+  updateSideCounts();
+  syncPane();
+}
+
+/* ================= 桌面右栏详情面板 ================= */
+function markActiveItem() {
+  const id = isWide() ? state.activeId : null;
+  document.querySelectorAll('#feed .item[data-id]').forEach((it) => {
+    const on = it.dataset.id === id;
+    it.classList.toggle('item--active', on);
+    if (on) it.setAttribute('aria-current', 'true'); else it.removeAttribute('aria-current');
+  });
+}
+
+function renderPaneState(kind) {
+  const host = $('#pane-sheet');
+  if (!host) return;
+  host.innerHTML = '';
+  if (kind === 'loading') { host.appendChild(loadingNode()); return; }
+  const box = el('div', 'feed-state');
+  const art = el('div', 'state-art');
+  art.innerHTML = SVG_EMPTY;
+  box.appendChild(art);
+  box.appendChild(el('p', null, COPY.paneEmpty));
+  const btn = el('button', 'btn btn-primary', COPY.headerPublish);
+  btn.type = 'button';
+  btn.addEventListener('click', openPublish);
+  box.appendChild(btn);
+  host.appendChild(box);
+}
+
+// 让右栏和信息流保持一致：
+// - 用户点选过的需求：一直显示它；状态被改动（如我的发布里改成已接单）时用新数据重建。
+// - 没选中：显示当前筛选结果里最新发布的一条；列表为空时显示空状态。
+// 同一条且状态没变时不重建，避免已展开的联系方式、回复区被刷掉。force=true 时总是重建（切换语言）。
+function syncPane(force) {
+  if (!isWide()) return;
+  if (!state.loaded) { if (!state.activeData) renderPaneState('loading'); return; }
+  if (paneExplicit && state.activeData) {
+    const fresh = state.demands.find((x) => x.id === state.activeData.id);
+    if (force || (fresh && fresh.status !== state.activeData.status)) {
+      if (fresh) state.activeData = { ...state.activeData, ...fresh };
+      buildDetail(state.activeData);
+    }
+    markActiveItem();
+    return;
+  }
+  paneExplicit = false;
+  const list = sortedFeed();
+  const latest = list.reduce((a, b) => (!a || b.created_at > a.created_at ? b : a), null);
+  if (!latest) {
+    state.activeId = null; state.activeData = null; state.activeContact = null;
+    renderPaneState('empty');
+  } else if (force || state.activeId !== latest.id || !state.activeData || state.activeData.status !== latest.status) {
+    state.activeId = latest.id; state.activeData = latest; state.activeContact = null;
+    buildDetail(latest);
+  }
+  markActiveItem();
+}
+
+// 取消右栏的点选（URL 回到 /），右栏改回默认的最新一条
+function clearPaneSelection() {
+  paneExplicit = false;
+  state.activeId = null; state.activeData = null; state.activeContact = null;
+  if (detailIdFromHash()) { try { history.replaceState(null, '', baseHashUrl()); } catch { /* 忽略 */ } }
+  syncPane();
+}
+
+// 跨越 1024px 断点：弹窗中的详情搬到右栏，或右栏里点选的详情改用弹窗打开
+function handleWideChange() {
+  const modal = $('#modal-detail');
+  if (isWide()) {
+    if (!modal.hidden) {
+      modal.hidden = true;
+      document.body.style.overflow = '';
+      paneExplicit = !!state.activeData;
+    } else {
+      paneExplicit = false;
+      state.activeId = null; state.activeData = null; state.activeContact = null;
+    }
+    detailPushed = false;
+    if (paneExplicit) buildDetail(state.activeData);
+    syncPane();
+  } else {
+    const picked = paneExplicit && state.activeData;
+    paneExplicit = false;
+    const host = $('#pane-sheet');
+    if (host) host.innerHTML = '';
+    if (picked) { buildDetail(state.activeData); openModal('#modal-detail'); }
+    else { state.activeId = null; state.activeData = null; state.activeContact = null; }
+    markActiveItem();
+  }
+}
+
+// 详情里会打开另一个弹窗的操作（去发布 / 我的发布）：手机/平板先关掉详情弹窗，桌面右栏保持不动
+function leaveDetailForDialog() {
+  if (!isWide()) closeModal('#modal-detail');
+}
+
+/* ================= 左栏分类列表 ================= */
+function buildSideCats() {
+  const nav = $('#side-cats');
+  if (!nav) return;
+  nav.innerHTML = '';
+  const mk = (key, label, stamp) => {
+    const b = el('button', 'side-cat');
+    b.type = 'button';
+    b.dataset.cat = key;
+    if (state.category === key) { b.classList.add('active'); b.setAttribute('aria-current', 'true'); }
+    b.append(stamp, el('span', 'side-cat-label', label), el('span', 'side-cat-count'));
+    b.addEventListener('click', () => setCategory(key));
+    nav.appendChild(b);
+  };
+  const all = el('span', 'stamp', '全');
+  all.style.background = '#E9EDF2';
+  all.style.color = '#14304F';
+  mk('all', COPY.tabAll, all);
+  CATEGORY_KEYS.forEach((key) => mk(key, COPY.categories[key], categoryStamp(key)));
+  updateSideCounts();
+}
+
+// 分类后的数字：该分类当前可见的条数（跟随「只看进行中」，不跟随搜索词）
+function updateSideCounts() {
+  const nav = $('#side-cats');
+  if (!nav) return;
+  const pool = state.demands.filter((d) => !state.openOnly || (d.status === 'open' && !isOverdue(d)));
+  nav.querySelectorAll('.side-cat').forEach((b) => {
+    const n = b.dataset.cat === 'all' ? pool.length : pool.filter((d) => d.category === b.dataset.cat).length;
+    const c = b.querySelector('.side-cat-count');
+    if (c) c.textContent = state.loaded ? String(n) : '';
+  });
 }
 
 function emptyState() {
@@ -687,6 +835,8 @@ function emptyState() {
 
 function listItem(d) {
   const it = el('article', 'item');
+  it.dataset.id = d.id;
+  if (isWide() && state.activeId === d.id) { it.classList.add('item--active'); it.setAttribute('aria-current', 'true'); }
   it.setAttribute('role', 'button');
   it.tabIndex = 0;
   it.setAttribute('aria-label', d.title);
@@ -732,18 +882,20 @@ function heroCounts() {
 }
 function updateHero() {
   const c = heroCounts();
-  const l1 = $('#hero-line1'), l2 = $('#hero-line2'), l3 = $('#hero-line3');
   const loading = !state.loaded;
   const launched = state.loaded && c.real === 0;
-  const hero = $('#hero');
-  if (hero) hero.classList.toggle('hero--skeleton', loading);
-  if (l1) l1.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.heroOpen(c.open));
-  if (l2) l2.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.heroNeed(c.open));
-  if (l3) {
-    l3.textContent = loading || launched ? '' : COPY.heroDone(c.matched);
-    // 计数只含真实帖；列表里仍有示例帖时加灰色说明，避免误解
-    if (!loading && c.real > 0 && c.samples > 0) l3.appendChild(el('span', 'hero-note', COPY.heroNoSamples));
-  }
+  // 手机端开场区 #hero 与桌面左栏 #side-hero 共用同一套文案
+  document.querySelectorAll('#hero, #side-hero').forEach((hero) => {
+    const l1 = $('.hero-line1', hero), l2 = $('.hero-line2', hero), l3 = $('.hero-line3', hero);
+    hero.classList.toggle('hero--skeleton', loading);
+    if (l1) l1.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.heroOpen(c.open));
+    if (l2) l2.textContent = loading ? '' : (launched ? COPY.heroLaunch2 : COPY.heroNeed(c.open));
+    if (l3) {
+      l3.textContent = loading || launched ? '' : COPY.heroDone(c.matched);
+      // 计数只含真实帖；列表里仍有示例帖时加灰色说明，避免误解
+      if (!loading && c.real > 0 && c.samples > 0) l3.appendChild(el('span', 'hero-note', COPY.heroNoSamples));
+    }
+  });
   const sub = $('#glassbar-sub');
   if (sub) sub.textContent = loading ? '' : (launched ? COPY.heroLaunch1 : COPY.glassSub(c.open));
 }
@@ -803,12 +955,30 @@ function showDetail(d) {
   state.activeId = d.id;
   state.activeContact = null;
   state.activeData = d;
+  if (isWide()) {
+    // 桌面三栏：显示在右栏，不弹窗
+    paneExplicit = true;
+    buildDetail(d);
+    markActiveItem();
+    return;
+  }
   buildDetail(d);
   openModal('#modal-detail');
 }
 
 // 点击条目：push 一条历史，使返回键/关闭都能把 URL 恢复成 /
 function openDetail(d) {
+  if (isWide()) {
+    // 右栏里连续切换多条时只替换 URL，不堆历史；从「未选中」进入时 push 一条，返回键可回到默认
+    if (paneExplicit && state.activeId === d.id) return;
+    try {
+      if (detailIdFromHash()) history.replaceState({ dw: d.id }, '', detailHashUrl(d.id));
+      else history.pushState({ dw: d.id }, '', detailHashUrl(d.id));
+    } catch { /* 忽略 */ }
+    detailPushed = false;
+    showDetail(d);
+    return;
+  }
   try { history.pushState({ dw: d.id }, '', detailHashUrl(d.id)); detailPushed = true; }
   catch { detailPushed = false; }
   showDetail(d);
@@ -825,12 +995,19 @@ async function openDetailById(id) {
     toast(COPY.deepLinkMissing);
     if (detailIdFromHash()) { try { history.replaceState(null, '', baseHashUrl()); } catch { /* 忽略 */ } }
     hideDetailOnly();
+    if (isWide()) { paneExplicit = false; state.activeId = null; state.activeData = null; }
     renderFeed();
   }
 }
 
 function handlePopState() {
   const id = detailIdFromHash();
+  if (isWide()) {
+    if (id) { if (!paneExplicit || state.activeId !== id) openDetailById(id); }
+    else if (paneExplicit) clearPaneSelection();
+    detailPushed = false;
+    return;
+  }
   if (id) {
     if ($('#modal-detail').hidden || state.activeId !== id) openDetailById(id);
   } else if (!$('#modal-detail').hidden) {
@@ -873,16 +1050,20 @@ function askConfirm({ title, body, ok, cancel }) {
 
 /* ================= 详情弹窗 ================= */
 function buildDetail(d) {
-  const sheet = $('#modal-detail .sheet');
+  const inPane = isWide();
+  const sheet = inPane ? $('#pane-sheet') : $('#modal-detail .sheet');
   sheet.innerHTML = '';
+  if (inPane) sheet.scrollTop = 0;
 
   const head = el('div', 'sheet-head');
   head.appendChild(el('h2', null, COPY.detailTitle));
-  const close = el('button', 'icon-btn', '✕');
-  close.type = 'button';
-  close.setAttribute('aria-label', COPY.close);
-  close.addEventListener('click', () => closeModal('#modal-detail'));
-  head.appendChild(close);
+  if (!inPane) { // 右栏常驻，不需要关闭按钮
+    const close = el('button', 'icon-btn', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', COPY.close);
+    close.addEventListener('click', () => closeModal('#modal-detail'));
+    head.appendChild(close);
+  }
 
   const meta = el('div', 'detail-meta');
   meta.appendChild(categoryStamp(d.category));
@@ -904,7 +1085,7 @@ function buildDetail(d) {
     contactBox.appendChild(el('p', 'sample-note', COPY.sampleNote));
     const btnPost = el('button', 'btn btn-secondary btn-block', COPY.publishTitle);
     btnPost.type = 'button';
-    btnPost.addEventListener('click', () => { closeModal('#modal-detail'); openPublish(); });
+    btnPost.addEventListener('click', () => { leaveDetailForDialog(); openPublish(); });
     contactBox.appendChild(btnPost);
   } else {
     const btnView = el('button', 'btn btn-primary btn-block', COPY.viewContact);
@@ -1162,7 +1343,7 @@ const PIN_RE = /^[0-9]{4}$/;
 
 function openPinClaim(d) {
   // 本机已经有这条：直接打开「我的发布」
-  if (mineTokenFor(d.id)) { closeModal('#modal-detail'); openMine(); return; }
+  if (mineTokenFor(d.id)) { leaveDetailForDialog(); openMine(); return; }
   state.pinDemand = d;
   buildPinSheet(d);
   openModal('#modal-pin');
@@ -1233,7 +1414,7 @@ async function submitPinClaim(d, input, errLine, btn) {
     }
     addMine(res.id, res.manage_token);
     closeModal('#modal-pin');
-    closeModal('#modal-detail');
+    leaveDetailForDialog();
     toast(COPY.pinDone);
     openMine();
   } catch (err) {
@@ -1825,6 +2006,10 @@ async function removeDemand(mine, d, item, btn) {
     removeMine(mine.id);
     item.remove();
     toast(COPY.removeDone);
+    if (isWide() && state.activeId === mine.id) { // 右栏正显示被撤下的这条：换回默认
+      state.demands = state.demands.filter((x) => x.id !== mine.id);
+      clearPaneSelection();
+    }
     loadDemands();
     if (!readMine().length) openMine(); // 无剩余则回到空状态
   } catch (err) {
@@ -1839,6 +2024,7 @@ async function removeDemand(mine, d, item, btn) {
 function buildTabs() {
   buildTabList($('#tabs'));
   buildTabList($('#glass-tabs'));
+  buildSideCats();
   updateTabsFade();
 }
 // 右缘渐隐：仅当可横向滑动且未滑到最右时显示
@@ -1869,8 +2055,11 @@ function buildTabList(container) {
 
 function setCategory(key) {
   state.category = key;
-  document.querySelectorAll('#tabs .tab, #glass-tabs .tab').forEach((t) => {
+  document.querySelectorAll('#tabs .tab, #glass-tabs .tab, #side-cats .side-cat').forEach((t) => {
     t.classList.toggle('active', t.dataset.cat === key);
+  });
+  document.querySelectorAll('#side-cats .side-cat').forEach((t) => {
+    if (t.dataset.cat === key) t.setAttribute('aria-current', 'true'); else t.removeAttribute('aria-current');
   });
   renderFeed();
 }
@@ -2123,33 +2312,38 @@ function readOpenOnly() {
 function setOpenOnly(on) {
   state.openOnly = !!on;
   try { localStorage.setItem(OPEN_ONLY_KEY, on ? '1' : '0'); } catch { /* 忽略 */ }
-  const sw = $('#open-only');
-  if (sw) {
+  document.querySelectorAll('#open-only, #side-open-only').forEach((sw) => {
     sw.classList.toggle('on', state.openOnly);
     sw.setAttribute('aria-checked', state.openOnly ? 'true' : 'false');
-  }
+  });
   renderFeed();
 }
 
 function renderStatic() {
   document.title = COPY.docTitle;
-  document.querySelectorAll('#brand-title .brand-logo-text, #glassbar-title .brand-logo-text').forEach((t) => {
+  document.querySelectorAll('#brand-title .brand-logo-text, #glassbar-title .brand-logo-text, #side-brand .brand-logo-text').forEach((t) => {
     t.textContent = COPY.brandWall;
   });
   $('#btn-mine').textContent = COPY.headerMy;
   $('#glass-mine').textContent = COPY.headerMy;
+  $('#side-mine').textContent = COPY.headerMy;
   $('#btn-publish').textContent = COPY.headerPublish;
+  $('#side-publish').textContent = COPY.headerPublish;
   $('#fab-label').textContent = COPY.headerPublish;
   $('#search').placeholder = COPY.searchPlaceholder;
   $('#glass-search').placeholder = COPY.searchPlaceholder;
   $('#footer').textContent = COPY.footer;
-  const sw = $('#open-only');
-  if (sw) {
+  $('#about-title').textContent = COPY.aboutTitle;
+  $('#about-why').textContent = COPY.aboutWhy;
+  $('#about-fx').textContent = COPY.aboutFx;
+  $('#about-safe').textContent = COPY.aboutSafe;
+  $('#pane').setAttribute('aria-label', COPY.detailTitle);
+  document.querySelectorAll('#open-only, #side-open-only').forEach((sw) => {
     const lbl = sw.querySelector('.switch-label');
     if (lbl) lbl.textContent = COPY.openOnly;
     sw.classList.toggle('on', state.openOnly);
     sw.setAttribute('aria-checked', state.openOnly ? 'true' : 'false');
-  }
+  });
   const note = $('#lang-note');
   if (note) {
     note.hidden = lang !== 'en';
@@ -2163,7 +2357,7 @@ function setLang(next) {
   COPY = I18N[next];
   try { localStorage.setItem(LANG_KEY, next); } catch { /* 忽略 */ }
   document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en';
-  document.querySelectorAll('#lang-switch button').forEach((b) => {
+  document.querySelectorAll('#lang-switch button, #side-lang-switch button').forEach((b) => {
     const on = b.dataset.lang === next;
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -2173,7 +2367,8 @@ function setLang(next) {
   buildTabs();
   buildPublishForm();
   renderFeed();
-  if ($('#modal-detail') && !$('#modal-detail').hidden && state.activeData) buildDetail(state.activeData);
+  if (isWide()) syncPane(true);
+  else if ($('#modal-detail') && !$('#modal-detail').hidden && state.activeData) buildDetail(state.activeData);
   if ($('#modal-success') && !$('#modal-success').hidden && state.lastShareDemand) buildSuccess(state.lastShareDemand);
   if ($('#modal-pin') && !$('#modal-pin').hidden && state.pinDemand) buildPinSheet(state.pinDemand);
 }
@@ -2206,7 +2401,7 @@ function glyphPath(letter) {
 
 /* 顶栏 logo：XMUM 字形（高 17px、填充墨蓝）+「需求墙」文字；主顶栏与玻璃顶栏共用 */
 function buildBrandLogo() {
-  ['#brand-title', '#glassbar-title'].forEach(buildBrandLogoIn);
+  ['#brand-title', '#glassbar-title', '#side-brand'].forEach(buildBrandLogoIn);
 }
 function buildBrandLogoIn(sel) {
   const host = $(sel);
@@ -2444,15 +2639,20 @@ function init() {
   buildTabs();
   buildPublishForm();
 
-  document.querySelectorAll('#lang-switch button').forEach((b) => {
+  document.querySelectorAll('#lang-switch button, #side-lang-switch button').forEach((b) => {
     b.addEventListener('click', () => { if (b.dataset.lang !== lang) setLang(b.dataset.lang); });
   });
 
-  const openOnlySwitch = $('#open-only');
-  if (openOnlySwitch) openOnlySwitch.addEventListener('click', () => setOpenOnly(!state.openOnly));
+  document.querySelectorAll('#open-only, #side-open-only').forEach((sw) => {
+    sw.addEventListener('click', () => setOpenOnly(!state.openOnly));
+  });
 
   $('#btn-publish').addEventListener('click', openPublish);
   $('#btn-mine').addEventListener('click', openMine);
+  $('#side-publish').addEventListener('click', openPublish);
+  $('#side-mine').addEventListener('click', openMine);
+  if (WIDE_MQ.addEventListener) WIDE_MQ.addEventListener('change', handleWideChange);
+  else if (WIDE_MQ.addListener) WIDE_MQ.addListener(handleWideChange);
   $('#fab-publish').addEventListener('click', openPublish);
   $('#glass-mine').addEventListener('click', openMine);
   $('#glass-search-btn').addEventListener('click', toggleGlassSearch);
